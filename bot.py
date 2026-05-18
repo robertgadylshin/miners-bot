@@ -92,7 +92,7 @@ async def error_handler(update, context):
     logger.error(f"Exception: {context.error}", exc_info=context.error)
 
 
-def main():
+async def main():
     token = os.environ.get("BOT_TOKEN")
     if not token:
         raise ValueError("BOT_TOKEN environment variable not set")
@@ -131,10 +131,19 @@ def main():
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, handle_new_member))
 
     app.add_error_handler(error_handler)
+    
+# Set bot commands menu
+    await app.bot.set_my_commands([
+        ("start",       "Register in the system"),
+        ("tasks",       "Today's task checklist"),
+        ("balance",     "Your tokens & stats"),
+        ("leaderboard", "Team ranking"),
+        ("help",        "All commands"),
+    ])
 
     logger.info("Bot started...")
     app.run_polling(drop_pending_updates=True)
 
-
 if __name__ == '__main__':
-    main()
+    import asyncio
+    asyncio.run(main())
