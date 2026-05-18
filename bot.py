@@ -132,8 +132,7 @@ async def main():
 
     app.add_error_handler(error_handler)
     
-# Set bot commands menu
-    await app.bot.set_my_commands([
+await app.bot.set_my_commands([
         ("start",       "Register in the system"),
         ("tasks",       "Today's task checklist"),
         ("balance",     "Your tokens & stats"),
@@ -142,7 +141,8 @@ async def main():
     ])
 
     logger.info("Bot started...")
-    app.run_polling(drop_pending_updates=True)
+    await app.run_polling(drop_pending_updates=True)
+
 
 if __name__ == '__main__':
     import asyncio
