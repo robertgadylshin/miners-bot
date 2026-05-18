@@ -5,10 +5,8 @@ from telegram.ext import (
     Application, CommandHandler, CallbackQueryHandler,
     MessageHandler, filters, ContextTypes
 )
-from datetime import datetime
 
 from db import init_db, get_db
-from tasks import get_tokens_for_task
 from handlers.barista import (
     cmd_tasks, cmd_balance, cmd_leaderboard,
     handle_task_photo, handle_new_member,
@@ -119,7 +117,7 @@ async def main():
     app.add_handler(CommandHandler("locations", cmd_locations))
     app.add_handler(CommandHandler("addlocation", cmd_addlocation))
 
-    # Inline button callbacks
+    # Callbacks
     app.add_handler(CallbackQueryHandler(handle_approve_callback,     pattern=r'^approve_'))
     app.add_handler(CallbackQueryHandler(handle_reject_callback,      pattern=r'^reject_'))
     app.add_handler(CallbackQueryHandler(handle_leaderboard_callback, pattern=r'^lb_'))
@@ -127,12 +125,12 @@ async def main():
     # Photo submissions
     app.add_handler(MessageHandler(filters.PHOTO & filters.CaptionRegex(r'.+'), handle_task_photo))
 
-    # Auto-register new group members
+    # Auto-register new members
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, handle_new_member))
 
     app.add_error_handler(error_handler)
-    
-await app.bot.set_my_commands([
+
+    await app.bot.set_my_commands([
         ("start",       "Register in the system"),
         ("tasks",       "Today's task checklist"),
         ("balance",     "Your tokens & stats"),
