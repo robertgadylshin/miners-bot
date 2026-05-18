@@ -90,47 +90,8 @@ async def error_handler(update, context):
     logger.error(f"Exception: {context.error}", exc_info=context.error)
 
 
-async def main():
-    token = os.environ.get("BOT_TOKEN")
-    if not token:
-        raise ValueError("BOT_TOKEN environment variable not set")
-
-    init_db()
-
-    app = Application.builder().token(token).build()
-
-    # General
-    app.add_handler(CommandHandler("start", cmd_start))
-    app.add_handler(CommandHandler("help", cmd_help))
-
-    # Barista
-    app.add_handler(CommandHandler("tasks", cmd_tasks))
-    app.add_handler(CommandHandler("balance", cmd_balance))
-    app.add_handler(CommandHandler("leaderboard", cmd_leaderboard))
-
-    # Manager
-    app.add_handler(CommandHandler("stats", cmd_stats))
-    app.add_handler(CommandHandler("addmanager", cmd_addmanager))
-
-    # Admin
-    app.add_handler(CommandHandler("setup", cmd_setup))
-    app.add_handler(CommandHandler("locations", cmd_locations))
-    app.add_handler(CommandHandler("addlocation", cmd_addlocation))
-
-    # Callbacks
-    app.add_handler(CallbackQueryHandler(handle_approve_callback,     pattern=r'^approve_'))
-    app.add_handler(CallbackQueryHandler(handle_reject_callback,      pattern=r'^reject_'))
-    app.add_handler(CallbackQueryHandler(handle_leaderboard_callback, pattern=r'^lb_'))
-
-    # Photo submissions
-    app.add_handler(MessageHandler(filters.PHOTO & filters.CaptionRegex(r'.+'), handle_task_photo))
-
-    # Auto-register new members
-    app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, handle_new_member))
-
-    app.add_error_handler(error_handler)
-
-    await app.bot.set_my_commands([
+async def post_init(application):
+    await application.bot.set_my_commands([
         ("start",       "Register in the system"),
         ("tasks",       "Today's task checklist"),
         ("balance",     "Your tokens & stats"),
@@ -138,10 +99,39 @@ async def main():
         ("help",        "All commands"),
     ])
 
+
+def main():
+    token = os.environ.get("BOT_TOKEN")
+    if not token:
+        raise ValueError("BOT_TOKEN environment variable not set")
+
+    init_db()
+
+    app = Application.builder().token(token).post_init(post_init).build()
+
+    app.add_handler(CommandHandler("start", cmd_start))
+    app.add_handler(CommandHandler("help", cmd_help))
+    app.add_handler(CommandHandler("tasks", cmd_tasks))
+    app.add_handler(CommandHandler("balance", cmd_balance))
+    app.add_handler(CommandHandler("leaderboard", cmd_leaderboard))
+    app.add_handler(CommandHandler("stats", cmd_stats))
+    app.add_handler(CommandHandler("addmanager", cmd_addmanager))
+    app.add_handler(CommandHandler("setup", cmd_setup))
+    app.add_handler(CommandHandler("locations", cmd_locations))
+    app.add_handler(CommandHandler("addlocation", cmd_addlocation))
+
+    app.add_handler(CallbackQueryHandler(handle_approve_callback,     pattern=r'^approve_'))
+    app.add_handler(CallbackQueryHandler(handle_reject_callback,      pattern=r'^reject_'))
+    app.add_handler(CallbackQueryHandler(handle_leaderboard_callback, pattern=r'^lb_'))
+
+    app.add_handler(MessageHandler(filters.PHOTO & filters.CaptionRegex(r'.+'), handle_task_photo))
+    app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, handle_new_member))
+
+    app.add_error_handler(error_handler)
+
     logger.info("Bot started...")
-    await app.run_polling(drop_pending_updates=True)
+    app.run_polling(drop_pending_updates=True)
 
 
 if __name__ == '__main__':
-    import asyncio
-    asyncio.run(main())
+    main()
