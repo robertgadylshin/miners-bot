@@ -17,59 +17,7 @@ def is_manager(telegram_id, location_id, db):
     ).fetchone() is not None
 
 
-async def cmd_iammanager(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Group admin/owner can register themselves as manager for this location."""
-    chat = update.effective_chat
-    user = update.effective_user
-    db = get_db()
-
-    if chat.type not in ('group', 'supergroup'):
-        await update.message.reply_text("⚠️ This command only works in a group chat.")
-        return
-
-    location = db.execute(
-        "SELECT * FROM locations WHERE chat_id = ?", (chat.id,)
-    ).fetchone()
-    if not location:
-        await update.message.reply_text("⚠️ This group is not set up yet.")
-        return
-
-    # Check if user is admin or owner of the group
-    try:
-        member = await context.bot.get_chat_member(chat.id, user.id)
-        if member.status not in ('administrator', 'creator'):
-            await update.message.reply_text(
-                "⛔ Only group admins or owners can register as manager."
-            )
-            return
-    except Exception:
-        await update.message.reply_text("❌ Could not verify your group role.")
-        return
-
-    # Register user first if not yet
-    db.execute("""
-        INSERT OR IGNORE INTO users (telegram_id, username, full_name, location_id, role)
-        VALUES (?, ?, ?, ?, 'barista')
-    """, (user.id, user.username or '', user.full_name, location['id']))
-
-    # Promote to manager
-    db.execute("""
-        UPDATE users SET role = 'manager'
-        WHERE telegram_id = ? AND location_id = ?
-    """, (user.id, location['id']))
-    db.commit()
-
-    await update.message.reply_text(
-        f"✅ *{user.first_name}*, you are now registered as manager for *{location['name']}*!\n\n"
-        f"You will receive task submissions in your DMs with Approve/Reject buttons.\n\n"
-        f"⚠️ Make sure you have started a conversation with the bot in DMs first — "
-        f"find the bot and send /start there, otherwise you won't receive notifications.",
-        parse_mode='Markdown'
-    )
-
-
 async def cmd_addmanager(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Super-admin promotes any user to manager by username."""
     chat = update.effective_chat
     user = update.effective_user
     db = get_db()
@@ -78,8 +26,7 @@ async def cmd_addmanager(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "SELECT * FROM admins WHERE telegram_id = ?", (user.id,)
     ).fetchone()
     if not is_admin:
-        await update.message.reply_text("⛔ Only super-admins can use this command.\n"
-                                        "Group admins should use /iammanager instead.")
+        await update.message.reply_text("⛔ Only super-admins can use this command.")
         return
 
     if not context.args:
@@ -97,20 +44,24 @@ async def cmd_addmanager(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⚠️ Location not set up.")
         return
 
-    updated = db.execute("""
-        UPDATE users SET role = 'manager'
-        WHERE username = ? AND location_id = ?
-    """, (username, location['id']))
+    # Insert stub if user never wrote /start, then promote
+    db.execute(
+        "INSERT OR IGNORE INTO users (telegram_id, username, full_name, location_id, role) "
+        "VALUES (0, ?, ?, ?, 'barista')",
+        (username, username, location['id'])
+    )
+    db.execute(
+        "UPDATE users SET role = 'manager' WHERE username = ? AND location_id = ?",
+        (username, location['id'])
+    )
     db.commit()
 
-    if updated.rowcount:
-        await update.message.reply_text(f"✅ @{username} is now a manager for *{location['name']}*.",
-                                        parse_mode='Markdown')
-    else:
-        await update.message.reply_text(
-            f"❌ User @{username} not found.\n"
-            "They need to send /start in this group first."
-        )
+    location_name = location['name']
+    await update.message.reply_text(
+        f"✅ @{username} is now a manager for *{location_name}*.\n\n"
+        "⚠️ Ask them to write /start to the bot in DMs so they receive photo notifications.",
+        parse_mode='Markdown'
+    )
 
 
 async def handle_approve_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -129,39 +80,42 @@ async def handle_approve_callback(update: Update, context: ContextTypes.DEFAULT_
         return
 
     if submission['status'] != 'pending':
-        await query.edit_message_caption(f"ℹ️ Already processed: {submission['status']}")
+        await query.edit_message_caption(
+            "ℹ️ Already processed: " + submission['status']
+        )
         return
 
     if not is_manager(reviewer_id, submission['location_id'], db):
         await query.answer("⛔ Only managers can approve tasks.", show_alert=True)
         return
 
-    db.execute("""
-        UPDATE task_submissions
-        SET status = 'approved', reviewed_at = ?, reviewed_by = ?
-        WHERE id = ?
-    """, (datetime.now().isoformat(), reviewer_id, submission_id))
-
-    db.execute("""
-        UPDATE users SET tokens = tokens + ?, total_earned = total_earned + ?
-        WHERE id = ?
-    """, (submission['tokens_awarded'], submission['tokens_awarded'], submission['user_id']))
+    db.execute(
+        "UPDATE task_submissions SET status = 'approved', reviewed_at = ?, reviewed_by = ? WHERE id = ?",
+        (datetime.now().isoformat(), reviewer_id, submission_id)
+    )
+    db.execute(
+        "UPDATE users SET tokens = tokens + ?, total_earned = total_earned + ? WHERE id = ?",
+        (submission['tokens_awarded'], submission['tokens_awarded'], submission['user_id'])
+    )
     db.commit()
 
     barista = db.execute("SELECT * FROM users WHERE id = ?", (submission['user_id'],)).fetchone()
     new_balance = db.execute(
         "SELECT tokens FROM users WHERE id = ?", (submission['user_id'],)
     ).fetchone()['tokens']
-    location = db.execute(
-        "SELECT name FROM locations WHERE id = ?", (submission['location_id'],)
-    ).fetchone()
+
+    task_key = submission['task_key']
+    task_name = submission['task_name']
+    tokens = submission['tokens_awarded']
+    reviewer_name = query.from_user.username or query.from_user.full_name
 
     await query.edit_message_caption(
         f"✅ *Approved!*\n\n"
         f"👤 {barista['full_name']}\n"
-        f"Task: *{submission['task_key']}* — {submission['task_name']}\n"
-        f"Awarded: +{submission['tokens_awarded']}🪙\n"
-        f"Balance: {new_balance}🪙",
+        f"Task: *{task_key}* — {task_name}\n"
+        f"Awarded: +{tokens}🪙\n"
+        f"Balance: {new_balance}🪙\n"
+        f"By: @{reviewer_name}",
         parse_mode='Markdown'
     )
 
@@ -170,8 +124,8 @@ async def handle_approve_callback(update: Update, context: ContextTypes.DEFAULT_
             chat_id=barista['telegram_id'],
             text=(
                 f"🎉 *Task approved!*\n\n"
-                f"✅ *{submission['task_key']}* — {submission['task_name']}\n"
-                f"+{submission['tokens_awarded']} 🪙\n"
+                f"✅ *{task_key}* — {task_name}\n"
+                f"+{tokens} 🪙\n"
                 f"Total balance: *{new_balance}🪙*"
             ),
             parse_mode='Markdown'
@@ -196,26 +150,29 @@ async def handle_reject_callback(update: Update, context: ContextTypes.DEFAULT_T
         return
 
     if submission['status'] != 'pending':
-        await query.edit_message_caption(f"ℹ️ Already processed: {submission['status']}")
+        await query.edit_message_caption(
+            "ℹ️ Already processed: " + submission['status']
+        )
         return
 
     if not is_manager(reviewer_id, submission['location_id'], db):
         await query.answer("⛔ Only managers can reject tasks.", show_alert=True)
         return
 
-    db.execute("""
-        UPDATE task_submissions
-        SET status = 'rejected', reviewed_at = ?, reviewed_by = ?
-        WHERE id = ?
-    """, (datetime.now().isoformat(), reviewer_id, submission_id))
+    db.execute(
+        "UPDATE task_submissions SET status = 'rejected', reviewed_at = ?, reviewed_by = ? WHERE id = ?",
+        (datetime.now().isoformat(), reviewer_id, submission_id)
+    )
     db.commit()
 
     barista = db.execute("SELECT * FROM users WHERE id = ?", (submission['user_id'],)).fetchone()
+    task_key = submission['task_key']
+    task_name = submission['task_name']
 
     await query.edit_message_caption(
         f"❌ *Rejected*\n\n"
         f"👤 {barista['full_name']}\n"
-        f"Task: *{submission['task_key']}* — {submission['task_name']}",
+        f"Task: *{task_key}* — {task_name}",
         parse_mode='Markdown'
     )
 
@@ -224,7 +181,7 @@ async def handle_reject_callback(update: Update, context: ContextTypes.DEFAULT_T
             chat_id=barista['telegram_id'],
             text=(
                 f"❌ *Task rejected*\n\n"
-                f"*{submission['task_key']}* — {submission['task_name']}\n\n"
+                f"*{task_key}* — {task_name}\n\n"
                 f"Please redo the task and resubmit."
             ),
             parse_mode='Markdown'
@@ -251,16 +208,16 @@ async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     today = date.today().isoformat()
 
-    today_stats = db.execute("""
-        SELECT status, COUNT(*) as cnt FROM task_submissions
-        WHERE location_id = ? AND date(submitted_at) = ?
-        GROUP BY status
-    """, (location['id'], today)).fetchall()
+    today_stats = db.execute(
+        "SELECT status, COUNT(*) as cnt FROM task_submissions "
+        "WHERE location_id = ? AND date(submitted_at) = ? GROUP BY status",
+        (location['id'], today)
+    ).fetchall()
 
-    pending = db.execute("""
-        SELECT COUNT(*) as cnt FROM task_submissions
-        WHERE location_id = ? AND status = 'pending'
-    """, (location['id'],)).fetchone()['cnt']
+    pending = db.execute(
+        "SELECT COUNT(*) as cnt FROM task_submissions WHERE location_id = ? AND status = 'pending'",
+        (location['id'],)
+    ).fetchone()['cnt']
 
     top = db.execute("""
         SELECT u.full_name, u.tokens, COUNT(s.id) as tasks_done
@@ -274,10 +231,12 @@ async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """, (location['id'],)).fetchall()
 
     status_map = {'approved': '✅', 'pending': '⏳', 'rejected': '❌'}
-    lines = [f"📊 *Stats — {location['name']}*\n📅 Today\n"]
+    location_name = location['name']
+    lines = [f"📊 *Stats — {location_name}*\n📅 Today\n"]
 
     for row in today_stats:
-        lines.append(f"{status_map.get(row['status'], '•')} {row['status'].capitalize()}: {row['cnt']}")
+        icon = status_map.get(row['status'], '•')
+        lines.append(icon + " " + row['status'].capitalize() + ": " + str(row['cnt']))
 
     if pending > 0:
         lines.append(f"\n⚠️ *{pending} pending approval*")
@@ -285,7 +244,8 @@ async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lines.append("\n🏆 *Top this week*")
     medals = ['🥇', '🥈', '🥉']
     for i, b in enumerate(top):
-        medal = medals[i] if i < 3 else f"{i+1}."
-        lines.append(f"{medal} {b['full_name'].split()[0]} — {b['tasks_done']} tasks · {b['tokens']}🪙")
+        medal = medals[i] if i < 3 else str(i + 1) + "."
+        name = b['full_name'].split()[0]
+        lines.append(medal + " " + name + " — " + str(b['tasks_done']) + " tasks · " + str(b['tokens']) + "🪙")
 
     await update.message.reply_text('\n'.join(lines), parse_mode='Markdown')
