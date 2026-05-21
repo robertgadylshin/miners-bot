@@ -77,7 +77,7 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "1. Complete the task\n"
         "2. Take a photo\n"
         "3. Send the photo here\n"
-        "4. Write the task key as caption (e.g. `mon_fridges`)\n"
+        "4. Write the task key as caption (e.g. `FRIDGES`)\n"
         "5. Manager approves → tokens added ✅\n\n"
         "*Manager commands:*\n"
         "/stats — location stats and pending approvals\n"
