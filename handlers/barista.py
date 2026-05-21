@@ -266,7 +266,7 @@ async def cmd_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lines.append("")
         lines.append("Recent:")
         for r in recent:
-            dt = r['submitted_at'][5:10]
+            dt = r['submitted_at'][8:10] + '/' + r['submitted_at'][5:7]
             lines.append(f"• {r['task_key']} +{r['tokens_awarded']}🪙 {dt}")
 
     lines.append("")
