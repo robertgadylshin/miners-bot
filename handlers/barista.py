@@ -2,6 +2,8 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 from datetime import datetime, date
 import asyncio
+import logging
+logger = logging.getLogger(__name__)
 
 from db import get_db
 from tasks import get_today_tasks, get_tokens_for_task, find_task_by_key
@@ -170,17 +172,25 @@ async def handle_task_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🕐 {datetime.now().strftime('%H:%M')}"
     )
 
+    if not managers:
+        logger.warning(f"No managers found for location {location['id']}")
+
     for manager in managers:
+        mgr_id = manager['telegram_id']
+        if mgr_id == 0:
+            logger.warning(f"Manager has telegram_id=0, skipping")
+            continue
         try:
             await context.bot.send_photo(
-                chat_id=manager['telegram_id'],
+                chat_id=mgr_id,
                 photo=photo_file_id,
                 caption=notify_text,
                 parse_mode='Markdown',
                 reply_markup=keyboard
             )
-        except Exception:
-            pass
+            logger.info(f"Photo sent to manager {mgr_id}")
+        except Exception as e:
+            logger.error(f"Failed to send to manager {mgr_id}: {e}")
 
 
 async def cmd_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
