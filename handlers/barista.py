@@ -252,7 +252,7 @@ async def cmd_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     lines = [
         f"{first_name}'s balance",
-        f"{loc_name}",
+        f"📍 {loc_name}",
         "",
         f"🪙 {db_user['tokens']} tokens",
         f"📈 Total ever earned: {db_user['total_earned']}",
