@@ -163,7 +163,7 @@ async def handle_adminstats_callback(update: Update, context: ContextTypes.DEFAU
         return
 
     from datetime import date
-    today = date.today().isoformat()
+    today = date.today().strftime('%d/%m/%Y')
 
     # Today's submissions
     today_stats = db.execute("""
