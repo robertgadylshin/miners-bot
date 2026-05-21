@@ -123,12 +123,11 @@ async def handle_approve_callback(update: Update, context: ContextTypes.DEFAULT_
         await context.bot.send_message(
             chat_id=barista['telegram_id'],
             text=(
-                f"🎉 *Task approved!*\n\n"
-                f"✅ *{task_key}* — {task_name}\n"
+                f"🎉 Task approved!\n\n"
+                f"✅ {task_key} — {task_name}\n"
                 f"+{tokens} 🪙\n"
-                f"Total balance: *{new_balance}🪙*"
-            ),
-            parse_mode='Markdown'
+                f"Total balance: {new_balance}🪙"
+            )
         )
     except Exception:
         pass
