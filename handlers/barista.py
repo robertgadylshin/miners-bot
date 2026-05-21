@@ -1,8 +1,10 @@
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 from datetime import datetime, date
-import asyncio
 import logging
+
+from db import get_db
+from tasks import get_today_tasks, get_tokens_for_task, find_task_by_key
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +45,7 @@ async def cmd_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "SELECT * FROM locations WHERE chat_id = ?", (chat.id,)
     ).fetchone()
     if not location:
-        await update.message.reply_text("⚠️ This group is not set up yet. Ask admin to run /setup.")
+        await update.message.reply_text("This group is not set up yet. Ask admin to run /setup.")
         return
 
     db.execute("""
@@ -63,8 +65,8 @@ async def cmd_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE):
     submitted_keys = {row['task_key']: row['status'] for row in submitted}
 
     lines = [
-        f"Tasks for {esc(today_str)}",
-        f"📍 {esc(location['name'])}",
+        f"Tasks for {today_str}",
+        f"📍 {location['name']}",
         "",
     ]
 
@@ -77,21 +79,21 @@ async def cmd_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for label, items in groups:
         if not items:
             continue
-        lines.append(f"*{esc(label)}*")
+        lines.append(label)
         for t in items:
             status = submitted_keys.get(t['key'])
             prefix = '✅' if status == 'approved' else '⏳' if status == 'pending' else '•'
-            lines.append(f"{prefix} *{esc(t['key'])}*")
-            lines.append(esc(t['name']))
+            lines.append(f"{prefix} {t['key']}")
+            lines.append(t['name'])
             lines.append("")
 
     lines.append(
-        "📸 *How to submit:*\n"
+        "📸 How to submit:\n"
         "Take a photo → send it here → task key as caption\n"
-        "`FRIDGES` or `fridges` or `Fridges` — any case works"
+        "FRIDGES or fridges or Fridges — any case works"
     )
 
-    await update.message.reply_text('\n'.join(lines), parse_mode='MarkdownV2')
+    await update.message.reply_text('\n'.join(lines))
 
 
 async def handle_task_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -122,11 +124,10 @@ async def handle_task_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     task = find_task_by_key(caption)
     if not task:
         await update.message.reply_text(
-            "❓ Task key not recognized\\.\n"
-            "Send the photo with the task key as caption\\.\n"
-            "Example: `FRIDGES` or `fridges`\n\n"
-            "Use /tasks to see today's list\\.",
-            parse_mode='MarkdownV2'
+            "Task key not recognized.\n"
+            "Send the photo with the task key as caption.\n"
+            "Example: FRIDGES or fridges\n\n"
+            "Use /tasks to see today's list."
         )
         return
 
@@ -153,11 +154,10 @@ async def handle_task_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     db.commit()
 
     await update.message.reply_text(
-        f"📸 *Submitted\\!*\n\n"
-        f"*{esc(task['key'])}* — {esc(task['name'])}\n"
-        f"\\+{tokens} 🪙\n\n"
-        f"⏳ Waiting for manager approval\\.\\.\\.",
-        parse_mode='MarkdownV2'
+        f"📸 Submitted!\n\n"
+        f"{task['key']} — {task['name']}\n"
+        f"+{tokens} 🪙\n\n"
+        f"⏳ Waiting for manager approval..."
     )
 
     managers = db.execute("""
@@ -170,7 +170,6 @@ async def handle_task_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         InlineKeyboardButton("❌ Reject",  callback_data=f"reject_{submission_id}"),
     ]])
 
-    # Plain text for manager notification — no markdown, no parse issues
     name = user.full_name or user.username or 'Unknown'
     username_str = f"@{user.username}" if user.username else "no username"
     notify_text = (
@@ -248,33 +247,32 @@ async def cmd_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ORDER BY submitted_at DESC LIMIT 5
     """, (db_user['id'],)).fetchall()
 
-    first_name = esc(user.first_name or '')
-    loc_name = esc(location['name'])
+    first_name = user.first_name or user.username or 'Barista'
+    loc_name = location['name']
 
     lines = [
-        f"💰 *{first_name}'s balance*",
-        f"📍 {loc_name}",
+        f"{first_name}'s balance",
+        f"{loc_name}",
         "",
-        f"🪙 *{db_user['tokens']} tokens*",
+        f"🪙 {db_user['tokens']} tokens",
         f"📈 Total ever earned: {db_user['total_earned']}",
-        f"🏆 Rank: *\\#{rank}* of {total_staff}",
+        f"🏆 Rank: #{rank} of {total_staff}",
         "",
-        f"📅 Today: {today_done} tasks",
-        f"📆 This week: {week_done} tasks",
+        f"Today: {today_done} tasks",
+        f"This week: {week_done} tasks",
     ]
 
     if recent:
         lines.append("")
-        lines.append("*Recent:*")
+        lines.append("Recent:")
         for r in recent:
-            dt = esc(r['submitted_at'][5:10])
-            key = esc(r['task_key'])
-            lines.append(f"• *{key}* \\+{r['tokens_awarded']}🪙 _{dt}_")
+            dt = r['submitted_at'][5:10]
+            lines.append(f"• {r['task_key']} +{r['tokens_awarded']}🪙 {dt}")
 
     lines.append("")
-    lines.append("👀 /leaderboard — see how you compare with the team")
+    lines.append("/leaderboard — see how you compare with the team")
 
-    await update.message.reply_text('\n'.join(lines), parse_mode='MarkdownV2')
+    await update.message.reply_text('\n'.join(lines))
 
 
 async def cmd_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -294,7 +292,7 @@ async def cmd_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
         InlineKeyboardButton("📆 This month", callback_data=f"lb_{location['id']}_month"),
     ]])
 
-    await update.message.reply_text(text, parse_mode='MarkdownV2', reply_markup=keyboard)
+    await update.message.reply_text(text, reply_markup=keyboard)
 
 
 def _build_leaderboard(db, location, viewer_telegram_id, period):
@@ -323,21 +321,21 @@ def _build_leaderboard(db, location, viewer_telegram_id, period):
 
     medals = ['🥇', '🥈', '🥉']
     lines = [
-        f"🏆 *Leaderboard — {esc(period_label)}*",
-        f"📍 {esc(location['name'])}",
+        f"Leaderboard — {period_label}",
+        f"📍 {location['name']}",
         "",
     ]
 
     for i, row in enumerate(rows):
-        medal = medals[i] if i < 3 else f"{i + 1}\\."
+        medal = medals[i] if i < 3 else f"{i + 1}."
         is_you = "  ← you" if row['telegram_id'] == viewer_telegram_id else ""
-        name = esc(row['full_name'].split()[0])
-        lines.append(f"{medal} *{name}*{esc(is_you)}")
+        name = row['full_name'].split()[0]
+        lines.append(f"{medal} {name}{is_you}")
         lines.append(f"🪙 {row['period_tokens']} tokens · ✅ {row['period_tasks']} tasks")
         lines.append("")
 
     if not rows:
-        lines.append("No activity yet this period\\.")
+        lines.append("No activity yet this period.")
 
     return '\n'.join(lines)
 
@@ -363,8 +361,4 @@ async def handle_leaderboard_callback(update: Update, context: ContextTypes.DEFA
         InlineKeyboardButton("📆 This month", callback_data=f"lb_{location_id}_month"),
     ]])
 
-    await query.edit_message_text(text, parse_mode='MarkdownV2', reply_markup=keyboard)
-
-
-from db import get_db
-from tasks import get_today_tasks, get_tokens_for_task, find_task_by_key
+    await query.edit_message_text(text, reply_markup=keyboard)
