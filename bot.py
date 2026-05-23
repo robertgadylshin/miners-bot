@@ -40,7 +40,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if not location:
             await update.message.reply_text(
-                "⚠️ This group is not registered yet.\n"
+                "This group is not registered yet.\n"
                 "Ask your admin to run /setup to configure this location."
             )
             return
@@ -52,76 +52,81 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         db.commit()
 
         await update.message.reply_text(
-            f"☕ Welcome to *The Miners* task system, {user.first_name}!\n\n"
-            f"📍 Location: *{location['name']}*\n\n"
+            f"Welcome to The Miners task system, {user.first_name}!\n\n"
+            f"Location: {location['name']}\n\n"
             "• /tasks — today's task list\n"
             "• /balance — your tokens & stats\n"
             "• /leaderboard — team ranking\n\n"
-            "Complete a task → take a photo → send it here with the task key as caption 🪙",
-            parse_mode='Markdown'
+            "Complete a task → take a photo → send it here with the task key as caption."
         )
 
     else:
         db = get_db()
 
-        # Update telegram_id for managers registered by username before they wrote /start
         if user.username:
-            db.execute(
-                "UPDATE users SET telegram_id = ?, full_name = ? "
-                "WHERE username = ? AND telegram_id = 0",
-                (user.id, user.full_name, user.username)
-            )
-            db.commit()
+            try:
+                db.execute(
+                    "UPDATE users SET telegram_id = ?, full_name = ? "
+                    "WHERE username = ? AND telegram_id = 0",
+                    (user.id, user.full_name, user.username)
+                )
+                db.commit()
+                logger.info(f"Updated telegram_id for username={user.username} to {user.id}")
+            except Exception as e:
+                logger.error(f"Error updating manager telegram_id: {e}")
 
-        is_admin = db.execute(
-            "SELECT * FROM admins WHERE telegram_id = ?", (user.id,)
-        ).fetchone()
+        try:
+            is_admin = db.execute(
+                "SELECT * FROM admins WHERE telegram_id = ?", (user.id,)
+            ).fetchone()
 
-        is_mgr = db.execute(
-            "SELECT u.*, l.name as loc_name FROM users u "
-            "JOIN locations l ON l.id = u.location_id "
-            "WHERE u.telegram_id = ? AND u.role = 'manager'",
-            (user.id,)
-        ).fetchall()
+            is_mgr = db.execute(
+                "SELECT u.*, l.name as loc_name FROM users u "
+                "JOIN locations l ON l.id = u.location_id "
+                "WHERE u.telegram_id = ? AND u.role = 'manager'",
+                (user.id,)
+            ).fetchall()
 
-        if is_admin:
-            await update.message.reply_text(
-                f"👋 Hi {user.first_name}!\n\n"
-                "• /mystats — stats for all locations\n"
-                "• /locations — list all locations\n",
-                parse_mode='Markdown'
-            )
-        elif is_mgr:
-            loc_lines = "\n".join(f"📍 {m['loc_name']}" for m in is_mgr)
-            await update.message.reply_text(
-                f"👋 Hi {user.first_name}!\n\n"
-                f"You are a manager for:\n{loc_lines}\n\n"
-                "You will now receive task submissions here for approval. ✅",
-                parse_mode='Markdown'
-            )
-        else:
-            await update.message.reply_text(
-                "👋 Hi! I'm The Miners task bot.\n"
-                "Add me to your coffee shop group and run /setup to get started."
-            )
+            logger.info(f"DM /start from {user.username} (id={user.id}), is_admin={bool(is_admin)}, is_mgr={len(is_mgr)}")
+
+            if is_admin:
+                await update.message.reply_text(
+                    f"Hi {user.first_name}!\n\n"
+                    "• /mystats — stats for all locations\n"
+                    "• /locations — list all locations\n"
+                )
+            elif is_mgr:
+                loc_lines = "\n".join(f"- {m['loc_name']}" for m in is_mgr)
+                await update.message.reply_text(
+                    f"Hi {user.first_name}!\n\n"
+                    f"You are a manager for:\n{loc_lines}\n\n"
+                    "You will now receive task submissions here for approval."
+                )
+            else:
+                await update.message.reply_text(
+                    "Hi! I'm The Miners task bot.\n"
+                    "Add me to your coffee shop group and run /setup to get started."
+                )
+        except Exception as e:
+            logger.error(f"Error in DM /start handler: {e}")
+            await update.message.reply_text("Something went wrong. Please try again.")
 
 
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "☕ *The Miners Task Bot*\n\n"
-        "*Barista commands:*\n"
+        "The Miners Task Bot\n\n"
+        "Barista commands:\n"
         "/tasks — today's checklist\n"
         "/balance — tokens, rank and history\n"
         "/leaderboard — team ranking\n\n"
-        "*How to submit:*\n"
+        "How to submit:\n"
         "Photo + task key as caption\n"
-        "`FRIDGES` or `fridges` or `Fridges` — any case works\n\n"
-        "*Manager commands:*\n"
+        "FRIDGES or fridges or Fridges — any case works\n\n"
+        "Manager commands:\n"
         "/stats — location stats\n"
         "/addmanager @username — promote to manager\n\n"
-        "*Admin commands:*\n"
-        "/mystats — stats for all locations\n",
-        parse_mode='Markdown'
+        "Admin commands:\n"
+        "/mystats — stats for all locations\n"
     )
 
 
