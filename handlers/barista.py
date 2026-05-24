@@ -153,7 +153,7 @@ async def handle_task_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if earned_today >= DAILY_LIMIT:
         await update.message.reply_text(
             f"You've reached the daily limit of {DAILY_LIMIT} points.\n"
-            f"Come back tomorrow!"
+            f"Looking forward to the next shift!"
         )
         return
 
