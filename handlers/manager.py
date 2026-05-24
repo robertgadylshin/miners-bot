@@ -1,11 +1,8 @@
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
 from datetime import datetime, date
-import logging
 
 from db import get_db
-
-logger = logging.getLogger(__name__)
 
 
 def is_manager(telegram_id, location_id, db):
@@ -55,9 +52,8 @@ async def cmd_addmanager(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     db.commit()
 
-    location_name = location['name']
     await update.message.reply_text(
-        f"@{username} is now a manager for {location_name}.\n\n"
+        f"@{username} is now a manager for {location['name']}.\n\n"
         "Ask them to write /start to the bot in DMs so they receive photo notifications."
     )
 
@@ -80,28 +76,33 @@ async def handle_approve_callback(update: Update, context: ContextTypes.DEFAULT_
             pass
         return
 
-    if submission['status'] != 'pending':
-        try:
-            await query.edit_message_caption("Already processed: " + submission['status'])
-        except Exception:
-            pass
-        return
-
     if not is_manager(reviewer_id, submission['location_id'], db):
         await query.answer("Only managers can approve tasks.", show_alert=True)
         return
 
-    db.execute(
-        "UPDATE task_submissions SET status = 'approved', reviewed_at = ?, reviewed_by = ? WHERE id = ?",
+    barista = db.execute("SELECT * FROM users WHERE id = ?", (submission['user_id'],)).fetchone()
+
+    if barista and barista['telegram_id'] == reviewer_id:
+        await query.answer("You cannot approve your own submission.", show_alert=True)
+        return
+
+    cursor = db.execute(
+        "UPDATE task_submissions SET status = 'approved', reviewed_at = ?, reviewed_by = ? "
+        "WHERE id = ? AND status = 'pending'",
         (datetime.now().isoformat(), reviewer_id, submission_id)
     )
+    if cursor.rowcount == 0:
+        try:
+            await query.edit_message_caption("Already processed.")
+        except Exception:
+            pass
+        return
+
     db.execute(
         "UPDATE users SET tokens = tokens + ?, total_earned = total_earned + ? WHERE id = ?",
         (submission['tokens_awarded'], submission['tokens_awarded'], submission['user_id'])
     )
     db.commit()
-
-    barista = db.execute("SELECT * FROM users WHERE id = ?", (submission['user_id'],)).fetchone()
     new_balance = db.execute(
         "SELECT tokens FROM users WHERE id = ?", (submission['user_id'],)
     ).fetchone()['tokens']
@@ -111,40 +112,23 @@ async def handle_approve_callback(update: Update, context: ContextTypes.DEFAULT_
     points = submission['tokens_awarded']
     reviewer_name = query.from_user.username or query.from_user.full_name
 
-    # Edit manager's photo message
     try:
         await query.edit_message_caption(
-            f"✅ Approved!\n\n"
+            f"Approved!\n\n"
             f"{barista['full_name']}\n"
             f"{task_key} — {task_name}\n"
             f"+{points} points\n"
             f"Balance: {new_balance} points\n"
             f"By: @{reviewer_name}"
         )
-    except Exception as e:
-        logger.error(f"Failed to edit manager message: {e}")
+    except Exception:
+        pass
 
-    # Edit the group message
-    if submission['group_message_id'] and submission['group_chat_id']:
-        try:
-            await context.bot.edit_message_text(
-                chat_id=submission['group_chat_id'],
-                message_id=submission['group_message_id'],
-                text=(
-                    f"✅ Approved!\n\n"
-                    f"{task_key} — {task_name}\n"
-                    f"+{points} points"
-                )
-            )
-        except Exception as e:
-            logger.error(f"Failed to edit group message: {e}")
-
-    # Notify barista in DM
     try:
         await context.bot.send_message(
             chat_id=barista['telegram_id'],
             text=(
-                f"Task approved!\n\n"
+                f"🎉 Task approved!\n\n"
                 f"✅ {task_key} — {task_name}\n"
                 f"+{points} points\n"
                 f"Total balance: {new_balance} points"
@@ -172,61 +156,45 @@ async def handle_reject_callback(update: Update, context: ContextTypes.DEFAULT_T
             pass
         return
 
-    if submission['status'] != 'pending':
-        try:
-            await query.edit_message_caption("Already processed: " + submission['status'])
-        except Exception:
-            pass
-        return
-
     if not is_manager(reviewer_id, submission['location_id'], db):
         await query.answer("Only managers can reject tasks.", show_alert=True)
         return
 
-    db.execute(
-        "UPDATE task_submissions SET status = 'rejected', reviewed_at = ?, reviewed_by = ? WHERE id = ?",
+    barista = db.execute("SELECT * FROM users WHERE id = ?", (submission['user_id'],)).fetchone()
+
+    if barista and barista['telegram_id'] == reviewer_id:
+        await query.answer("You cannot reject your own submission.", show_alert=True)
+        return
+
+    cursor = db.execute(
+        "UPDATE task_submissions SET status = 'rejected', reviewed_at = ?, reviewed_by = ? "
+        "WHERE id = ? AND status = 'pending'",
         (datetime.now().isoformat(), reviewer_id, submission_id)
     )
+    if cursor.rowcount == 0:
+        try:
+            await query.edit_message_caption("Already processed.")
+        except Exception:
+            pass
+        return
+
     db.commit()
 
-    barista = db.execute("SELECT * FROM users WHERE id = ?", (submission['user_id'],)).fetchone()
-    task_key = submission['task_key']
-    task_name = submission['task_name']
-    reviewer_name = query.from_user.username or query.from_user.full_name
-
-    # Edit manager's photo message
     try:
         await query.edit_message_caption(
-            f"❌ Rejected\n\n"
+            f"Rejected\n\n"
             f"{barista['full_name']}\n"
-            f"{task_key} — {task_name}\n"
-            f"By: @{reviewer_name}"
+            f"{submission['task_key']} — {submission['task_name']}"
         )
-    except Exception as e:
-        logger.error(f"Failed to edit manager message: {e}")
+    except Exception:
+        pass
 
-    # Edit the group message
-    if submission['group_message_id'] and submission['group_chat_id']:
-        try:
-            await context.bot.edit_message_text(
-                chat_id=submission['group_chat_id'],
-                message_id=submission['group_message_id'],
-                text=(
-                    f"❌ Not approved\n\n"
-                    f"{task_key} — {task_name}\n\n"
-                    f"Please redo and resubmit."
-                )
-            )
-        except Exception as e:
-            logger.error(f"Failed to edit group message: {e}")
-
-    # Notify barista in DM
     try:
         await context.bot.send_message(
             chat_id=barista['telegram_id'],
             text=(
-                f"Task not approved\n\n"
-                f"{task_key} — {task_name}\n\n"
+                f"Task rejected\n\n"
+                f"{submission['task_key']} — {submission['task_name']}\n\n"
                 f"Please redo the task and resubmit."
             )
         )
@@ -282,12 +250,12 @@ async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lines.append(f"{icon} {row['status'].capitalize()}: {row['cnt']}")
 
     if pending > 0:
-        lines.append(f"\n{pending} pending approval")
+        lines.append(f"\n⚠️ {pending} pending approval")
 
     lines.append("\nTop this week")
     medals = ['🥇', '🥈', '🥉']
     for i, b in enumerate(top):
-        medal = medals[i] if i < 3 else f"{i + 1}."
+        medal = medals[i] if i < 3 else f"{i+1}."
         name = b['full_name'].split()[0]
         lines.append(f"{medal} {name} — {b['tasks_done']} tasks · {b['tokens']} pts")
 
