@@ -1,17 +1,23 @@
+from datetime import date
+from zoneinfo import ZoneInfo
+
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
-from datetime import date
-import logging
 
 from db import get_db
-
-logger = logging.getLogger(__name__)
 
 
 def is_super_admin(telegram_id, db):
     return db.execute(
         "SELECT * FROM admins WHERE telegram_id = ?", (telegram_id,)
     ).fetchone() is not None
+
+
+def _first_name(full_name, username=''):
+    s = (full_name or '').strip()
+    if s:
+        return s.split()[0]
+    return username or 'Unknown'
 
 
 async def cmd_setup(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -37,10 +43,7 @@ async def cmd_setup(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ).fetchone()
 
     if existing:
-        await update.message.reply_text(
-            f"This group is already set up as {existing['name']}.\n"
-            "To rename use /renamelocation <new name>"
-        )
+        await update.message.reply_text(f"Already set up as: {existing['name']}")
         return
 
     db.execute("INSERT INTO locations (chat_id, name) VALUES (?, ?)", (chat.id, name))
@@ -48,8 +51,49 @@ async def cmd_setup(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(
         f"Location registered: {name}\n\n"
-        "Next: /addmanager @username"
+        f"Next: /addmanager @username\n"
+        f"Set timezone: /settimezone Europe/Kiev"
     )
+
+
+async def cmd_settimezone(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat = update.effective_chat
+    user = update.effective_user
+    db = get_db()
+
+    if chat.type not in ('group', 'supergroup'):
+        await update.message.reply_text("Use this command in the group chat.")
+        return
+
+    if not is_super_admin(user.id, db):
+        await update.message.reply_text("Super-admin only.")
+        return
+
+    if not context.args:
+        await update.message.reply_text(
+            "Usage: /settimezone Europe/Kiev\n"
+            "Examples: UTC, Europe/London, Asia/Dubai, America/New_York"
+        )
+        return
+
+    tz_name = context.args[0]
+    try:
+        ZoneInfo(tz_name)
+    except Exception:
+        await update.message.reply_text(
+            f"Invalid timezone: {tz_name}\n"
+            "Examples: UTC, Europe/London, Asia/Dubai, America/New_York"
+        )
+        return
+
+    location = db.execute("SELECT * FROM locations WHERE chat_id = ?", (chat.id,)).fetchone()
+    if not location:
+        await update.message.reply_text("Location not set up yet. Run /setup first.")
+        return
+
+    db.execute("UPDATE locations SET timezone = ? WHERE chat_id = ?", (tz_name, chat.id))
+    db.commit()
+    await update.message.reply_text(f"✅ Timezone set to {tz_name} for {location['name']}.")
 
 
 async def cmd_locations(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -62,7 +106,7 @@ async def cmd_locations(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     locations = db.execute(
         "SELECT l.*, COUNT(u.id) as staff_count FROM locations l "
-        "LEFT JOIN users u ON u.location_id = l.id "
+        "LEFT JOIN users u ON u.location_id = l.id AND u.role = 'barista' "
         "GROUP BY l.id ORDER BY l.name"
     ).fetchall()
 
@@ -72,8 +116,8 @@ async def cmd_locations(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     lines = [f"All locations ({len(locations)} total)\n"]
     for loc in locations:
-        lines.append(f"• {loc['name']} — {loc['staff_count']} staff")
-        lines.append(f"  ID: {loc['id']} | Chat: {loc['chat_id']}")
+        tz = loc['timezone'] or 'UTC'
+        lines.append(f"• {loc['name']} — {loc['staff_count']} baristas · {tz}")
 
     await update.message.reply_text('\n'.join(lines))
 
@@ -100,208 +144,6 @@ async def cmd_addlocation(update: Update, context: ContextTypes.DEFAULT_TYPE):
     db.execute("INSERT OR IGNORE INTO locations (chat_id, name) VALUES (?, ?)", (chat_id, name))
     db.commit()
     await update.message.reply_text(f"Location {name} added.")
-
-
-async def cmd_renamelocation(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Rename current group's location. Use in group chat."""
-    chat = update.effective_chat
-    user = update.effective_user
-    db = get_db()
-
-    if not is_super_admin(user.id, db):
-        await update.message.reply_text("Super-admin only.")
-        return
-
-    if not context.args:
-        await update.message.reply_text("Usage: /renamelocation New Name")
-        return
-
-    new_name = ' '.join(context.args)
-    result = db.execute(
-        "UPDATE locations SET name = ? WHERE chat_id = ?", (new_name, chat.id)
-    )
-    db.commit()
-
-    if result.rowcount:
-        await update.message.reply_text(f"Location renamed to: {new_name}")
-    else:
-        await update.message.reply_text("This group is not registered. Use /setup first.")
-
-
-async def cmd_deletelocation(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Delete current group's location and all its data."""
-    chat = update.effective_chat
-    user = update.effective_user
-    db = get_db()
-
-    if not is_super_admin(user.id, db):
-        await update.message.reply_text("Super-admin only.")
-        return
-
-    location = db.execute(
-        "SELECT * FROM locations WHERE chat_id = ?", (chat.id,)
-    ).fetchone()
-
-    if not location:
-        await update.message.reply_text("This group is not registered.")
-        return
-
-    # Ask for confirmation
-    keyboard = InlineKeyboardMarkup([[
-        InlineKeyboardButton(
-            f"Yes, delete {location['name']}",
-            callback_data=f"deleteloc_{location['id']}"
-        ),
-        InlineKeyboardButton("Cancel", callback_data="deleteloc_cancel"),
-    ]])
-
-    await update.message.reply_text(
-        f"Are you sure you want to delete {location['name']}?\n\n"
-        "This will remove all staff, submissions and data for this location.",
-        reply_markup=keyboard
-    )
-
-
-async def handle_deletelocation_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-
-    user = query.from_user
-    db = get_db()
-
-    if not is_super_admin(user.id, db):
-        await query.answer("Super-admin only.", show_alert=True)
-        return
-
-    if query.data == "deleteloc_cancel":
-        await query.edit_message_text("Cancelled.")
-        return
-
-    location_id = int(query.data.split('_')[1])
-    location = db.execute("SELECT * FROM locations WHERE id = ?", (location_id,)).fetchone()
-    if not location:
-        await query.edit_message_text("Location not found.")
-        return
-
-    name = location['name']
-    db.execute("DELETE FROM task_submissions WHERE location_id = ?", (location_id,))
-    db.execute("DELETE FROM users WHERE location_id = ?", (location_id,))
-    db.execute("DELETE FROM locations WHERE id = ?", (location_id,))
-    db.commit()
-
-    await query.edit_message_text(f"Location {name} deleted.")
-
-
-async def cmd_changemanager(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Remove old manager and set new one. Usage: /changemanager @newusername"""
-    chat = update.effective_chat
-    user = update.effective_user
-    db = get_db()
-
-    if not is_super_admin(user.id, db):
-        await update.message.reply_text("Super-admin only.")
-        return
-
-    if not context.args:
-        await update.message.reply_text("Usage: /changemanager @newusername")
-        return
-
-    location = db.execute(
-        "SELECT * FROM locations WHERE chat_id = ?", (chat.id,)
-    ).fetchone()
-    if not location:
-        await update.message.reply_text("This group is not registered.")
-        return
-
-    new_username = context.args[0].lstrip('@')
-
-    # Demote all current managers in this location to barista
-    db.execute(
-        "UPDATE users SET role = 'barista' WHERE location_id = ? AND role = 'manager'",
-        (location['id'],)
-    )
-
-    # Insert or promote new manager
-    db.execute(
-        "INSERT OR IGNORE INTO users (telegram_id, username, full_name, location_id, role) "
-        "VALUES (0, ?, ?, ?, 'barista')",
-        (new_username, new_username, location['id'])
-    )
-    db.execute(
-        "UPDATE users SET role = 'manager' WHERE username = ? AND location_id = ?",
-        (new_username, location['id'])
-    )
-    db.commit()
-
-    await update.message.reply_text(
-        f"Manager updated for {location['name']}.\n"
-        f"Previous managers demoted to barista.\n"
-        f"New manager: @{new_username}\n\n"
-        "Ask them to write /start to the bot in DMs."
-    )
-
-
-async def cmd_resetlocation(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Reset all submissions for this location (keeps staff). Use in group."""
-    chat = update.effective_chat
-    user = update.effective_user
-    db = get_db()
-
-    if not is_super_admin(user.id, db):
-        await update.message.reply_text("Super-admin only.")
-        return
-
-    location = db.execute(
-        "SELECT * FROM locations WHERE chat_id = ?", (chat.id,)
-    ).fetchone()
-    if not location:
-        await update.message.reply_text("This group is not registered.")
-        return
-
-    keyboard = InlineKeyboardMarkup([[
-        InlineKeyboardButton(
-            f"Yes, reset {location['name']}",
-            callback_data=f"resetloc_{location['id']}"
-        ),
-        InlineKeyboardButton("Cancel", callback_data="resetloc_cancel"),
-    ]])
-
-    await update.message.reply_text(
-        f"Reset {location['name']}?\n\n"
-        "This will clear all submissions and points but keep the staff list.",
-        reply_markup=keyboard
-    )
-
-
-async def handle_resetlocation_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-
-    user = query.from_user
-    db = get_db()
-
-    if not is_super_admin(user.id, db):
-        await query.answer("Super-admin only.", show_alert=True)
-        return
-
-    if query.data == "resetloc_cancel":
-        await query.edit_message_text("Cancelled.")
-        return
-
-    location_id = int(query.data.split('_')[1])
-    location = db.execute("SELECT * FROM locations WHERE id = ?", (location_id,)).fetchone()
-    if not location:
-        await query.edit_message_text("Location not found.")
-        return
-
-    db.execute("DELETE FROM task_submissions WHERE location_id = ?", (location_id,))
-    db.execute("UPDATE users SET tokens = 0, total_earned = 0 WHERE location_id = ?", (location_id,))
-    db.commit()
-
-    await query.edit_message_text(
-        f"Location {location['name']} reset.\n"
-        "All submissions and points cleared. Staff list kept."
-    )
 
 
 async def cmd_mystats(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -331,9 +173,6 @@ async def cmd_mystats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_adminstats_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
-
-    location_id = int(query.data.split('_')[1])
     user = query.from_user
     db = get_db()
 
@@ -341,17 +180,20 @@ async def handle_adminstats_callback(update: Update, context: ContextTypes.DEFAU
         await query.answer("Super-admin only.", show_alert=True)
         return
 
+    await query.answer()
+
+    location_id = int(query.data.split('_')[1])
     location = db.execute("SELECT * FROM locations WHERE id = ?", (location_id,)).fetchone()
     if not location:
         return
 
     today = date.today().strftime('%d/%m/%Y')
 
-    today_stats = db.execute("""
-        SELECT status, COUNT(*) as cnt FROM task_submissions
-        WHERE location_id = ? AND date(submitted_at) = date('now')
-        GROUP BY status
-    """, (location_id,)).fetchall()
+    today_stats = db.execute(
+        "SELECT status, COUNT(*) as cnt FROM task_submissions "
+        "WHERE location_id = ? AND date(submitted_at) = date('now') GROUP BY status",
+        (location_id,)
+    ).fetchall()
 
     pending = db.execute(
         "SELECT COUNT(*) as cnt FROM task_submissions WHERE location_id = ? AND status = 'pending'",
@@ -359,7 +201,7 @@ async def handle_adminstats_callback(update: Update, context: ContextTypes.DEFAU
     ).fetchone()['cnt']
 
     top = db.execute("""
-        SELECT u.full_name, u.tokens, COUNT(s.id) as tasks_done
+        SELECT u.full_name, u.username, u.tokens, COUNT(s.id) as tasks_done
         FROM users u
         LEFT JOIN task_submissions s ON s.user_id = u.id AND s.status = 'approved'
             AND date(s.submitted_at) >= date('now', '-7 days')
@@ -374,23 +216,13 @@ async def handle_adminstats_callback(update: Update, context: ContextTypes.DEFAU
         (location_id,)
     ).fetchone()['c']
 
-    managers = db.execute(
-        "SELECT username, full_name FROM users WHERE location_id = ? AND role = 'manager'",
-        (location_id,)
-    ).fetchall()
-
     status_map = {'approved': '✅', 'pending': '⏳', 'rejected': '❌'}
-
     lines = [
-        f"{location['name']}",
-        f"Staff: {staff_count}",
+        f"📊 {location['name']}",
+        f"Staff: {staff_count} baristas",
+        f"Today {today}",
+        "",
     ]
-
-    if managers:
-        mgr_names = ', '.join(f"@{m['username']}" if m['username'] else m['full_name'] for m in managers)
-        lines.append(f"Manager: {mgr_names}")
-
-    lines += ["", f"Today {today}"]
 
     for row in today_stats:
         icon = status_map.get(row['status'], '•')
@@ -400,13 +232,13 @@ async def handle_adminstats_callback(update: Update, context: ContextTypes.DEFAU
         lines.append("No submissions today.")
 
     if pending > 0:
-        lines.append(f"\n{pending} pending approval")
+        lines.append(f"\n⚠️ {pending} pending approval")
 
     lines.append("\nTop this week")
     medals = ['🥇', '🥈', '🥉']
     for i, b in enumerate(top):
         medal = medals[i] if i < 3 else f"{i+1}."
-        name = b['full_name'].split()[0]
+        name = _first_name(b['full_name'], b['username'])
         lines.append(f"{medal} {name} — {b['tasks_done']} tasks · {b['tokens']} pts")
 
     if not top:
@@ -421,15 +253,17 @@ async def handle_adminstats_callback(update: Update, context: ContextTypes.DEFAU
 
 async def handle_adminstats_back_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
-
     user = query.from_user
     db = get_db()
 
     if not is_super_admin(user.id, db):
+        await query.answer("Super-admin only.", show_alert=True)
         return
 
+    await query.answer()
+
     locations = db.execute("SELECT * FROM locations ORDER BY name").fetchall()
+
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton(f"📍 {loc['name']}", callback_data=f"adminstats_{loc['id']}")]
         for loc in locations
