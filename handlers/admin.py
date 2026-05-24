@@ -52,7 +52,7 @@ async def cmd_setup(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         f"Location registered: {name}\n\n"
         f"Next: /addmanager @username\n"
-        f"Set timezone: /settimezone Europe/Kiev"
+        f"Set timezone: /settimezone Europe/Prague"
     )
 
 
