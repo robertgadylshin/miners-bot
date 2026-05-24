@@ -38,6 +38,8 @@ CREATE TABLE IF NOT EXISTS task_submissions (
     submitted_at TEXT DEFAULT (datetime('now')),
     reviewed_at TEXT,
     reviewed_by INTEGER,
+    group_chat_id INTEGER,
+    group_message_id INTEGER,
     FOREIGN KEY (user_id) REFERENCES users(id)
 );
 
@@ -64,12 +66,15 @@ def get_db():
 def init_db():
     db = get_db()
     db.executescript(SCHEMA)
-
     admin_id = os.environ.get("SUPER_ADMIN_ID")
     if admin_id:
         db.execute(
             "INSERT OR IGNORE INTO admins (telegram_id) VALUES (?)", (int(admin_id),)
         )
-
+    for col, typ in [("group_chat_id", "INTEGER"), ("group_message_id", "INTEGER")]:
+        try:
+            db.execute(f"ALTER TABLE task_submissions ADD COLUMN {col} {typ}")
+        except Exception:
+            pass
     db.commit()
     print("✅ Database initialized")
