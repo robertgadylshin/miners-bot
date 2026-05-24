@@ -4,18 +4,9 @@ from datetime import datetime, date
 import logging
 
 from db import get_db
-from tasks import get_today_tasks, get_tokens_for_task, find_task_by_key
+from tasks import get_today_tasks, get_points_for_task, find_task_by_key, DAILY_LIMIT
 
 logger = logging.getLogger(__name__)
-
-
-def esc(text: str) -> str:
-    """Escape all MarkdownV2 special characters."""
-    if not text:
-        return ''
-    for ch in r'_*[]()~`>#+-=|{}.!\\':
-        text = text.replace(ch, f'\\{ch}')
-    return text
 
 
 async def handle_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -64,16 +55,25 @@ async def cmd_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """, (user.id, location['id'])).fetchall()
     submitted_keys = {row['task_key']: row['status'] for row in submitted}
 
+    # Today's points earned
+    earned_today = db.execute("""
+        SELECT COALESCE(SUM(tokens_awarded), 0) as total FROM task_submissions
+        WHERE user_id = (SELECT id FROM users WHERE telegram_id = ? AND location_id = ?)
+        AND status = 'approved'
+        AND date(submitted_at) = date('now')
+    """, (user.id, location['id'])).fetchone()['total']
+
     lines = [
         f"Tasks for {today_str}",
         f"📍 {location['name']}",
+        f"Today: {earned_today}/{DAILY_LIMIT} points earned",
         "",
     ]
 
     groups = [
-        ("🔴 Heavy — 3 tokens", [t for t in tasks if t['difficulty'] == 'hard']),
-        ("🟡 Standard — 2 tokens", [t for t in tasks if t['difficulty'] == 'medium']),
-        ("🟢 Quick — 1 token", [t for t in tasks if t['difficulty'] == 'easy']),
+        ("🔴 Heavy — 300 points", [t for t in tasks if t['difficulty'] == 'hard']),
+        ("🟡 Standard — 200 points", [t for t in tasks if t['difficulty'] == 'medium']),
+        ("🟢 Quick — 100 points", [t for t in tasks if t['difficulty'] == 'easy']),
     ]
 
     for label, items in groups:
@@ -142,21 +142,35 @@ async def handle_task_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(msg)
         return
 
+    # Check daily limit
+    earned_today = db.execute("""
+        SELECT COALESCE(SUM(tokens_awarded), 0) as total FROM task_submissions
+        WHERE user_id = ? AND status = 'approved' AND date(submitted_at) = date('now')
+    """, (db_user['id'],)).fetchone()['total']
+
+    points = get_points_for_task(task['key'])
+
+    if earned_today >= DAILY_LIMIT:
+        await update.message.reply_text(
+            f"You've reached the daily limit of {DAILY_LIMIT} points.\n"
+            f"Come back tomorrow!"
+        )
+        return
+
     photo_file_id = update.message.photo[-1].file_id
-    tokens = get_tokens_for_task(task['key'])
 
     db.execute("""
         INSERT INTO task_submissions
         (user_id, location_id, task_key, task_name, photo_file_id, tokens_awarded, status)
         VALUES (?, ?, ?, ?, ?, ?, 'pending')
-    """, (db_user['id'], location['id'], task['key'], task['name'], photo_file_id, tokens))
+    """, (db_user['id'], location['id'], task['key'], task['name'], photo_file_id, points))
     submission_id = db.execute("SELECT last_insert_rowid()").fetchone()[0]
     db.commit()
 
     await update.message.reply_text(
         f"📸 Submitted!\n\n"
         f"{task['key']} — {task['name']}\n"
-        f"+{tokens} 🪙\n\n"
+        f"+{points} points\n\n"
         f"⏳ Waiting for manager approval..."
     )
 
@@ -177,7 +191,7 @@ async def handle_task_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"📍 {location['name']}\n"
         f"👤 {name} ({username_str})\n\n"
         f"{task['key']} — {task['name']}\n"
-        f"🪙 +{tokens} tokens\n"
+        f"+{points} points\n"
         f"🕐 {datetime.now().strftime('%H:%M')}"
     )
 
@@ -235,6 +249,11 @@ async def cmd_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
         WHERE user_id = ? AND status = 'approved' AND date(submitted_at) = date('now')
     """, (db_user['id'],)).fetchone()['c']
 
+    earned_today = db.execute("""
+        SELECT COALESCE(SUM(tokens_awarded), 0) as total FROM task_submissions
+        WHERE user_id = ? AND status = 'approved' AND date(submitted_at) = date('now')
+    """, (db_user['id'],)).fetchone()['total']
+
     week_done = db.execute("""
         SELECT COUNT(*) as c FROM task_submissions
         WHERE user_id = ? AND status = 'approved'
@@ -252,13 +271,13 @@ async def cmd_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     lines = [
         f"{first_name}'s balance",
-        f"📍 {loc_name}",
+        f"{loc_name}",
         "",
-        f"🪙 {db_user['tokens']} tokens",
-        f"📈 Total ever earned: {db_user['total_earned']}",
-        f"🏆 Rank: #{rank} of {total_staff}",
+        f"⭐ {db_user['tokens']} points",
+        f"Total ever earned: {db_user['total_earned']}",
+        f"Rank: #{rank} of {total_staff}",
         "",
-        f"Today: {today_done} tasks",
+        f"Today: {earned_today}/{DAILY_LIMIT} points · {today_done} tasks",
         f"This week: {week_done} tasks",
     ]
 
@@ -267,7 +286,7 @@ async def cmd_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lines.append("Recent:")
         for r in recent:
             dt = r['submitted_at'][8:10] + '/' + r['submitted_at'][5:7]
-            lines.append(f"• {r['task_key']} +{r['tokens_awarded']}🪙 {dt}")
+            lines.append(f"• {r['task_key']} +{r['tokens_awarded']} pts {dt}")
 
     lines.append("")
     lines.append("/leaderboard — see how you compare with the team")
@@ -307,7 +326,7 @@ def _build_leaderboard(db, location, viewer_telegram_id, period):
         SELECT
             u.telegram_id,
             u.full_name,
-            COALESCE(SUM(s.tokens_awarded), 0) as period_tokens,
+            COALESCE(SUM(s.tokens_awarded), 0) as period_points,
             COUNT(s.id) as period_tasks
         FROM users u
         LEFT JOIN task_submissions s
@@ -316,7 +335,7 @@ def _build_leaderboard(db, location, viewer_telegram_id, period):
             AND date(s.submitted_at) >= {since}
         WHERE u.location_id = ? AND u.role = 'barista'
         GROUP BY u.id
-        ORDER BY period_tokens DESC, period_tasks DESC
+        ORDER BY period_points DESC, period_tasks DESC
     """, (location['id'],)).fetchall()
 
     medals = ['🥇', '🥈', '🥉']
@@ -331,7 +350,7 @@ def _build_leaderboard(db, location, viewer_telegram_id, period):
         is_you = "  ← you" if row['telegram_id'] == viewer_telegram_id else ""
         name = row['full_name'].split()[0]
         lines.append(f"{medal} {name}{is_you}")
-        lines.append(f"🪙 {row['period_tokens']} tokens · ✅ {row['period_tasks']} tasks")
+        lines.append(f"⭐ {row['period_points']} points · ✅ {row['period_tasks']} tasks")
         lines.append("")
 
     if not rows:
