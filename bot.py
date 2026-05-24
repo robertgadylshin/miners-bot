@@ -69,7 +69,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             try:
                 db.execute(
                     "UPDATE users SET telegram_id = ?, full_name = ? "
-                    "WHERE username = ? AND telegram_id = 0",
+                    "WHERE username = ? AND (telegram_id = 0 OR telegram_id IS NULL)",
                     (user.id, user.full_name, user.username)
                 )
                 db.commit()
@@ -146,13 +146,42 @@ async def error_handler(update, context):
 
 
 async def post_init(application):
-    await application.bot.set_my_commands([
-        ("start",   "Register / main menu"),
-        ("tasks",   "Today's task checklist"),
-        ("balance", "Your points & stats"),
-        ("leaderboard", "Team ranking"),
-        ("help",    "All commands"),
-    ])
+    import os
+    from telegram import (
+        BotCommandScopeAllGroupChats,
+        BotCommandScopeAllPrivateChats,
+        BotCommandScopeChat,
+    )
+
+    # Group chats — barista commands only
+    await application.bot.set_my_commands(
+        [
+            ("tasks",       "Today's task checklist"),
+            ("balance",     "Your points & stats"),
+            ("leaderboard", "Team ranking"),
+        ],
+        scope=BotCommandScopeAllGroupChats()
+    )
+
+    # Private chats default — just /start for managers
+    await application.bot.set_my_commands(
+        [("start", "Activate notifications")],
+        scope=BotCommandScopeAllPrivateChats()
+    )
+
+    # Super-admin gets /mystats and /help in DM
+    admin_id = os.environ.get("SUPER_ADMIN_ID")
+    if admin_id:
+        try:
+            await application.bot.set_my_commands(
+                [
+                    ("mystats", "Stats for all locations"),
+                    ("help",    "All commands"),
+                ],
+                scope=BotCommandScopeChat(chat_id=int(admin_id))
+            )
+        except Exception:
+            pass
 
 
 def main():
