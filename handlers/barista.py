@@ -167,12 +167,19 @@ async def handle_task_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     submission_id = db.execute("SELECT last_insert_rowid()").fetchone()[0]
     db.commit()
 
-    await update.message.reply_text(
+    sent = await update.message.reply_text(
         f"📸 Submitted!\n\n"
         f"{task['key']} — {task['name']}\n"
         f"+{points} points\n\n"
         f"⏳ Waiting for manager approval..."
     )
+
+    # Save message info so we can edit it after approval
+    db.execute(
+        "UPDATE task_submissions SET group_message_id = ?, group_chat_id = ? WHERE id = ?",
+        (sent.message_id, chat.id, submission_id)
+    )
+    db.commit()
 
     managers = db.execute("""
         SELECT telegram_id FROM users
