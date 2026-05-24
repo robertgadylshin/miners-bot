@@ -18,7 +18,9 @@ from handlers.manager import (
 )
 from handlers.admin import (
     cmd_setup, cmd_locations, cmd_addlocation, cmd_mystats,
-    handle_adminstats_callback, handle_adminstats_back_callback
+    cmd_renamelocation, cmd_deletelocation, cmd_changemanager, cmd_resetlocation,
+    handle_adminstats_callback, handle_adminstats_back_callback,
+    handle_deletelocation_callback, handle_resetlocation_callback
 )
 
 logging.basicConfig(
@@ -55,7 +57,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Welcome to The Miners task system, {user.first_name}!\n\n"
             f"Location: {location['name']}\n\n"
             "• /tasks — today's task list\n"
-            "• /balance — your tokens & stats\n"
+            "• /balance — your points & stats\n"
             "• /leaderboard — team ranking\n\n"
             "Complete a task → take a photo → send it here with the task key as caption."
         )
@@ -93,7 +95,12 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text(
                     f"Hi {user.first_name}!\n\n"
                     "• /mystats — stats for all locations\n"
-                    "• /locations — list all locations\n"
+                    "• /locations — list all locations\n\n"
+                    "Location management (use in group chat):\n"
+                    "• /renamelocation <new name>\n"
+                    "• /deletelocation\n"
+                    "• /resetlocation\n"
+                    "• /changemanager @username\n"
                 )
             elif is_mgr:
                 loc_lines = "\n".join(f"- {m['loc_name']}" for m in is_mgr)
@@ -117,16 +124,20 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "The Miners Task Bot\n\n"
         "Barista commands:\n"
         "/tasks — today's checklist\n"
-        "/balance — tokens, rank and history\n"
+        "/balance — points, rank and history\n"
         "/leaderboard — team ranking\n\n"
         "How to submit:\n"
         "Photo + task key as caption\n"
-        "FRIDGES or fridges or Fridges — any case works\n\n"
+        "FRIDGES or fridges — any case works\n\n"
         "Manager commands:\n"
         "/stats — location stats\n"
-        "/addmanager @username — promote to manager\n\n"
-        "Admin commands:\n"
+        "/addmanager @username — add manager\n\n"
+        "Admin commands (use in group):\n"
         "/mystats — stats for all locations\n"
+        "/renamelocation <name> — rename this location\n"
+        "/deletelocation — delete this location\n"
+        "/resetlocation — clear all submissions & points\n"
+        "/changemanager @username — replace manager\n"
     )
 
 
@@ -136,11 +147,11 @@ async def error_handler(update, context):
 
 async def post_init(application):
     await application.bot.set_my_commands([
-        ("start",       "Register / main menu"),
-        ("tasks",       "Today's task checklist"),
-        ("balance",     "Your tokens & stats"),
+        ("start",   "Register / main menu"),
+        ("tasks",   "Today's task checklist"),
+        ("balance", "Your points & stats"),
         ("leaderboard", "Team ranking"),
-        ("help",        "All commands"),
+        ("help",    "All commands"),
     ])
 
 
@@ -153,23 +164,29 @@ def main():
 
     app = Application.builder().token(token).post_init(post_init).build()
 
-    app.add_handler(CommandHandler("start",       cmd_start))
-    app.add_handler(CommandHandler("help",        cmd_help))
-    app.add_handler(CommandHandler("tasks",       cmd_tasks))
-    app.add_handler(CommandHandler("balance",     cmd_balance))
-    app.add_handler(CommandHandler("leaderboard", cmd_leaderboard))
-    app.add_handler(CommandHandler("stats",       cmd_stats))
-    app.add_handler(CommandHandler("addmanager",  cmd_addmanager))
-    app.add_handler(CommandHandler("setup",       cmd_setup))
-    app.add_handler(CommandHandler("locations",   cmd_locations))
-    app.add_handler(CommandHandler("addlocation", cmd_addlocation))
-    app.add_handler(CommandHandler("mystats",     cmd_mystats))
+    app.add_handler(CommandHandler("start",          cmd_start))
+    app.add_handler(CommandHandler("help",           cmd_help))
+    app.add_handler(CommandHandler("tasks",          cmd_tasks))
+    app.add_handler(CommandHandler("balance",        cmd_balance))
+    app.add_handler(CommandHandler("leaderboard",    cmd_leaderboard))
+    app.add_handler(CommandHandler("stats",          cmd_stats))
+    app.add_handler(CommandHandler("addmanager",     cmd_addmanager))
+    app.add_handler(CommandHandler("setup",          cmd_setup))
+    app.add_handler(CommandHandler("locations",      cmd_locations))
+    app.add_handler(CommandHandler("addlocation",    cmd_addlocation))
+    app.add_handler(CommandHandler("mystats",        cmd_mystats))
+    app.add_handler(CommandHandler("renamelocation", cmd_renamelocation))
+    app.add_handler(CommandHandler("deletelocation", cmd_deletelocation))
+    app.add_handler(CommandHandler("changemanager",  cmd_changemanager))
+    app.add_handler(CommandHandler("resetlocation",  cmd_resetlocation))
 
-    app.add_handler(CallbackQueryHandler(handle_approve_callback,         pattern=r'^approve_'))
-    app.add_handler(CallbackQueryHandler(handle_reject_callback,          pattern=r'^reject_'))
-    app.add_handler(CallbackQueryHandler(handle_leaderboard_callback,     pattern=r'^lb_'))
-    app.add_handler(CallbackQueryHandler(handle_adminstats_back_callback, pattern=r'^adminstats_back$'))
-    app.add_handler(CallbackQueryHandler(handle_adminstats_callback,      pattern=r'^adminstats_\d+$'))
+    app.add_handler(CallbackQueryHandler(handle_approve_callback,          pattern=r'^approve_'))
+    app.add_handler(CallbackQueryHandler(handle_reject_callback,           pattern=r'^reject_'))
+    app.add_handler(CallbackQueryHandler(handle_leaderboard_callback,      pattern=r'^lb_'))
+    app.add_handler(CallbackQueryHandler(handle_adminstats_back_callback,  pattern=r'^adminstats_back$'))
+    app.add_handler(CallbackQueryHandler(handle_adminstats_callback,       pattern=r'^adminstats_\d+$'))
+    app.add_handler(CallbackQueryHandler(handle_deletelocation_callback,   pattern=r'^deleteloc_'))
+    app.add_handler(CallbackQueryHandler(handle_resetlocation_callback,    pattern=r'^resetloc_'))
 
     app.add_handler(MessageHandler(filters.PHOTO & filters.CaptionRegex(r'.+'), handle_task_photo))
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, handle_new_member))
