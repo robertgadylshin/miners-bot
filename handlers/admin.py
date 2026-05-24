@@ -71,7 +71,7 @@ async def cmd_settimezone(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not context.args:
         await update.message.reply_text(
-            "Usage: /settimezone Europe/Kiev\n"
+            "Usage: /settimezone Europe/Prague\n"
             "Examples: UTC, Europe/London, Asia/Dubai, America/New_York"
         )
         return
