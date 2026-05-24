@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS locations (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     chat_id INTEGER UNIQUE NOT NULL,
     name TEXT NOT NULL,
+    timezone TEXT DEFAULT 'UTC',
     created_at TEXT DEFAULT (datetime('now'))
 );
 
@@ -40,6 +41,8 @@ CREATE TABLE IF NOT EXISTS task_submissions (
     reviewed_by INTEGER,
     group_chat_id INTEGER,
     group_message_id INTEGER,
+    photo_file_ids TEXT,
+    custom_description TEXT,
     FOREIGN KEY (user_id) REFERENCES users(id)
 );
 
@@ -71,9 +74,16 @@ def init_db():
         db.execute(
             "INSERT OR IGNORE INTO admins (telegram_id) VALUES (?)", (int(admin_id),)
         )
-    for col, typ in [("group_chat_id", "INTEGER"), ("group_message_id", "INTEGER")]:
+    migrations = [
+        ("locations",        "timezone",           "TEXT DEFAULT 'UTC'"),
+        ("task_submissions", "group_chat_id",       "INTEGER"),
+        ("task_submissions", "group_message_id",    "INTEGER"),
+        ("task_submissions", "photo_file_ids",      "TEXT"),
+        ("task_submissions", "custom_description",  "TEXT"),
+    ]
+    for table, col, typ in migrations:
         try:
-            db.execute(f"ALTER TABLE task_submissions ADD COLUMN {col} {typ}")
+            db.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")
         except Exception:
             pass
     db.commit()
