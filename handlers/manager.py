@@ -137,6 +137,21 @@ async def handle_approve_callback(update: Update, context: ContextTypes.DEFAULT_
     except Exception:
         pass
 
+    if submission['group_chat_id'] and submission['group_message_id']:
+        try:
+            await context.bot.edit_message_text(
+                chat_id=submission['group_chat_id'],
+                message_id=submission['group_message_id'],
+                text=(
+                    f"✅ Approved!\n\n"
+                    f"{task_key} — {task_name}\n"
+                    f"+{points} points\n"
+                    f"By: @{reviewer_name}"
+                )
+            )
+        except Exception:
+            pass
+
 
 async def handle_reject_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -200,6 +215,20 @@ async def handle_reject_callback(update: Update, context: ContextTypes.DEFAULT_T
         )
     except Exception:
         pass
+
+    if submission['group_chat_id'] and submission['group_message_id']:
+        try:
+            await context.bot.edit_message_text(
+                chat_id=submission['group_chat_id'],
+                message_id=submission['group_message_id'],
+                text=(
+                    f"❌ Rejected\n\n"
+                    f"{submission['task_key']} — {submission['task_name']}\n\n"
+                    f"Please redo and resubmit."
+                )
+            )
+        except Exception:
+            pass
 
 
 async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
