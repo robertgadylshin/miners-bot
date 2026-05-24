@@ -66,7 +66,7 @@ async def cmd_addmanager(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_approve_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
+    await query.answer("✅ Processing...")
 
     submission_id = int(query.data.split('_')[1])
     reviewer_id = query.from_user.id
@@ -76,13 +76,19 @@ async def handle_approve_callback(update: Update, context: ContextTypes.DEFAULT_
         "SELECT * FROM task_submissions WHERE id = ?", (submission_id,)
     ).fetchone()
     if not submission:
-        await query.edit_message_caption("❌ Submission not found.")
+        try:
+            await query.edit_message_caption("❌ Submission not found.")
+        except Exception:
+            pass
         return
 
     if submission['status'] != 'pending':
-        await query.edit_message_caption(
-            "ℹ️ Already processed: " + submission['status']
-        )
+        try:
+            await query.edit_message_caption(
+                "ℹ️ Already processed: " + submission['status']
+            )
+        except Exception:
+            pass
         return
 
     if not is_manager(reviewer_id, submission['location_id'], db):
@@ -135,7 +141,7 @@ async def handle_approve_callback(update: Update, context: ContextTypes.DEFAULT_
 
 async def handle_reject_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
+    await query.answer("❌ Processing...")
 
     submission_id = int(query.data.split('_')[1])
     reviewer_id = query.from_user.id
@@ -145,13 +151,19 @@ async def handle_reject_callback(update: Update, context: ContextTypes.DEFAULT_T
         "SELECT * FROM task_submissions WHERE id = ?", (submission_id,)
     ).fetchone()
     if not submission:
-        await query.edit_message_caption("❌ Submission not found.")
+        try:
+            await query.edit_message_caption("❌ Submission not found.")
+        except Exception:
+            pass
         return
 
     if submission['status'] != 'pending':
-        await query.edit_message_caption(
-            "ℹ️ Already processed: " + submission['status']
-        )
+        try:
+            await query.edit_message_caption(
+                "ℹ️ Already processed: " + submission['status']
+            )
+        except Exception:
+            pass
         return
 
     if not is_manager(reviewer_id, submission['location_id'], db):
