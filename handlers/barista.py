@@ -157,6 +157,14 @@ async def handle_task_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    if earned_today + points > DAILY_LIMIT:
+        remaining = DAILY_LIMIT - earned_today
+        await update.message.reply_text(
+            f"This task gives {points} points but you only have {remaining} left today.\n\n"
+            f"Pick a lighter task that fits — or pass this one to a teammate who needs the points more!"
+        )
+        return
+
     photo_file_id = update.message.photo[-1].file_id
 
     db.execute("""
