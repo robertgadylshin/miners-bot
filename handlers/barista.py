@@ -183,11 +183,14 @@ async def handle_task_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"⏳ Waiting for manager approval..."
     )
 
-    db.execute(
-        "UPDATE task_submissions SET group_chat_id = ?, group_message_id = ? WHERE id = ?",
-        (chat.id, sent.message_id, submission_id)
-    )
-    db.commit()
+    try:
+        db.execute(
+            "UPDATE task_submissions SET group_chat_id = ?, group_message_id = ? WHERE id = ?",
+            (chat.id, sent.message_id, submission_id)
+        )
+        db.commit()
+    except Exception as e:
+        logger.error(f"Failed to save group message ref: {e}")
 
     managers = db.execute("""
         SELECT telegram_id FROM users
