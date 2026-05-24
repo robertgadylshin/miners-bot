@@ -119,8 +119,8 @@ async def handle_approve_callback(update: Update, context: ContextTypes.DEFAULT_
         f"✅ *Approved!*\n\n"
         f"👤 {barista['full_name']}\n"
         f"Task: *{task_key}* — {task_name}\n"
-        f"Awarded: +{tokens}🪙\n"
-        f"Balance: {new_balance}🪙\n"
+        f"Awarded: +{tokens} points\n"
+        f"Balance: {new_balance} points\n"
         f"By: @{reviewer_name}",
         parse_mode='Markdown'
     )
@@ -131,8 +131,8 @@ async def handle_approve_callback(update: Update, context: ContextTypes.DEFAULT_
             text=(
                 f"🎉 Task approved!\n\n"
                 f"✅ {task_key} — {task_name}\n"
-                f"+{tokens} 🪙\n"
-                f"Total balance: {new_balance}🪙"
+                f"+{tokens} points\n"
+                f"Total balance: {new_balance} points"
             )
         )
     except Exception:
