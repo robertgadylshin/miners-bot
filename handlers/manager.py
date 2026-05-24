@@ -1,8 +1,13 @@
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ContextTypes
+import json
+import logging
 from datetime import datetime, date
 
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ContextTypes
+
 from db import get_db
+
+logger = logging.getLogger(__name__)
 
 
 def is_manager(telegram_id, location_id, db):
@@ -10,17 +15,27 @@ def is_manager(telegram_id, location_id, db):
         "SELECT role FROM users WHERE telegram_id = ? AND location_id = ?",
         (telegram_id, location_id)
     ).fetchone()
-    if user and user['role'] in ('manager', 'admin'):
+    if user and user['role'] == 'manager':
         return True
     return db.execute(
         "SELECT * FROM admins WHERE telegram_id = ?", (telegram_id,)
     ).fetchone() is not None
 
 
+def _reviewer_label(tg_user):
+    if tg_user.username:
+        return f"@{tg_user.username}"
+    return tg_user.full_name or 'manager'
+
+
 async def cmd_addmanager(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
     user = update.effective_user
     db = get_db()
+
+    if chat.type not in ('group', 'supergroup'):
+        await update.message.reply_text("Use this command in the group chat.")
+        return
 
     is_admin = db.execute(
         "SELECT * FROM admins WHERE telegram_id = ?", (user.id,)
@@ -33,7 +48,7 @@ async def cmd_addmanager(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Usage: /addmanager @username")
         return
 
-    username = context.args[0].lstrip('@')
+    username = context.args[0].lstrip('@').lower()
     location = db.execute(
         "SELECT * FROM locations WHERE chat_id = ?", (chat.id,)
     ).fetchone()
@@ -47,7 +62,7 @@ async def cmd_addmanager(update: Update, context: ContextTypes.DEFAULT_TYPE):
         (username, username, location['id'])
     )
     db.execute(
-        "UPDATE users SET role = 'manager' WHERE username = ? AND location_id = ?",
+        "UPDATE users SET role = 'manager' WHERE LOWER(username) = ? AND location_id = ?",
         (username, location['id'])
     )
     db.commit()
@@ -60,8 +75,6 @@ async def cmd_addmanager(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_approve_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer("Processing...")
-
     submission_id = int(query.data.split('_')[1])
     reviewer_id = query.from_user.id
     db = get_db()
@@ -70,10 +83,7 @@ async def handle_approve_callback(update: Update, context: ContextTypes.DEFAULT_
         "SELECT * FROM task_submissions WHERE id = ?", (submission_id,)
     ).fetchone()
     if not submission:
-        try:
-            await query.edit_message_caption("Submission not found.")
-        except Exception:
-            pass
+        await query.answer("Submission not found.", show_alert=True)
         return
 
     if not is_manager(reviewer_id, submission['location_id'], db):
@@ -86,6 +96,8 @@ async def handle_approve_callback(update: Update, context: ContextTypes.DEFAULT_
         await query.answer("You cannot approve your own submission.", show_alert=True)
         return
 
+    await query.answer()
+
     cursor = db.execute(
         "UPDATE task_submissions SET status = 'approved', reviewed_at = ?, reviewed_by = ? "
         "WHERE id = ? AND status = 'pending'",
@@ -93,7 +105,7 @@ async def handle_approve_callback(update: Update, context: ContextTypes.DEFAULT_
     )
     if cursor.rowcount == 0:
         try:
-            await query.edit_message_caption("Already processed.")
+            await query.edit_message_text("Already processed.")
         except Exception:
             pass
         return
@@ -103,6 +115,7 @@ async def handle_approve_callback(update: Update, context: ContextTypes.DEFAULT_
         (submission['tokens_awarded'], submission['tokens_awarded'], submission['user_id'])
     )
     db.commit()
+
     new_balance = db.execute(
         "SELECT tokens FROM users WHERE id = ?", (submission['user_id'],)
     ).fetchone()['tokens']
@@ -110,16 +123,16 @@ async def handle_approve_callback(update: Update, context: ContextTypes.DEFAULT_
     task_key = submission['task_key']
     task_name = submission['task_name']
     points = submission['tokens_awarded']
-    reviewer_name = query.from_user.username or query.from_user.full_name
+    reviewer = _reviewer_label(query.from_user)
 
     try:
-        await query.edit_message_caption(
-            f"Approved!\n\n"
+        await query.edit_message_text(
+            f"✅ Approved!\n\n"
             f"{barista['full_name']}\n"
             f"{task_key} — {task_name}\n"
             f"+{points} points\n"
             f"Balance: {new_balance} points\n"
-            f"By: @{reviewer_name}"
+            f"By: {reviewer}"
         )
     except Exception:
         pass
@@ -146,7 +159,100 @@ async def handle_approve_callback(update: Update, context: ContextTypes.DEFAULT_
                     f"✅ Approved!\n\n"
                     f"{task_key} — {task_name}\n"
                     f"+{points} points\n"
-                    f"By: @{reviewer_name}"
+                    f"By: {reviewer}"
+                )
+            )
+        except Exception:
+            pass
+
+
+async def handle_custom_approve_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    parts = query.data.split('_')   # custom_200_42
+    points = int(parts[1])
+    submission_id = int(parts[2])
+    reviewer_id = query.from_user.id
+    db = get_db()
+
+    submission = db.execute(
+        "SELECT * FROM task_submissions WHERE id = ?", (submission_id,)
+    ).fetchone()
+    if not submission:
+        await query.answer("Submission not found.", show_alert=True)
+        return
+
+    if not is_manager(reviewer_id, submission['location_id'], db):
+        await query.answer("Only managers can approve tasks.", show_alert=True)
+        return
+
+    barista = db.execute("SELECT * FROM users WHERE id = ?", (submission['user_id'],)).fetchone()
+
+    if barista and barista['telegram_id'] == reviewer_id:
+        await query.answer("You cannot approve your own submission.", show_alert=True)
+        return
+
+    await query.answer()
+
+    cursor = db.execute(
+        "UPDATE task_submissions SET status = 'approved', tokens_awarded = ?, "
+        "reviewed_at = ?, reviewed_by = ? WHERE id = ? AND status = 'pending'",
+        (points, datetime.now().isoformat(), reviewer_id, submission_id)
+    )
+    if cursor.rowcount == 0:
+        try:
+            await query.edit_message_text("Already processed.")
+        except Exception:
+            pass
+        return
+
+    db.execute(
+        "UPDATE users SET tokens = tokens + ?, total_earned = total_earned + ? WHERE id = ?",
+        (points, points, submission['user_id'])
+    )
+    db.commit()
+
+    new_balance = db.execute(
+        "SELECT tokens FROM users WHERE id = ?", (submission['user_id'],)
+    ).fetchone()['tokens']
+
+    reviewer = _reviewer_label(query.from_user)
+    description = submission['custom_description'] or submission['task_name']
+
+    try:
+        await query.edit_message_text(
+            f"✅ Custom task approved!\n\n"
+            f"{barista['full_name']}\n"
+            f"{description}\n"
+            f"+{points} points\n"
+            f"Balance: {new_balance} points\n"
+            f"By: {reviewer}"
+        )
+    except Exception:
+        pass
+
+    try:
+        await context.bot.send_message(
+            chat_id=barista['telegram_id'],
+            text=(
+                f"🎉 Custom task approved!\n\n"
+                f"📝 {description}\n"
+                f"+{points} points\n"
+                f"Total balance: {new_balance} points"
+            )
+        )
+    except Exception:
+        pass
+
+    if submission['group_chat_id'] and submission['group_message_id']:
+        try:
+            await context.bot.edit_message_text(
+                chat_id=submission['group_chat_id'],
+                message_id=submission['group_message_id'],
+                text=(
+                    f"✅ Custom task approved!\n\n"
+                    f"{description}\n"
+                    f"+{points} points\n"
+                    f"By: {reviewer}"
                 )
             )
         except Exception:
@@ -155,8 +261,6 @@ async def handle_approve_callback(update: Update, context: ContextTypes.DEFAULT_
 
 async def handle_reject_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer("Processing...")
-
     submission_id = int(query.data.split('_')[1])
     reviewer_id = query.from_user.id
     db = get_db()
@@ -165,10 +269,7 @@ async def handle_reject_callback(update: Update, context: ContextTypes.DEFAULT_T
         "SELECT * FROM task_submissions WHERE id = ?", (submission_id,)
     ).fetchone()
     if not submission:
-        try:
-            await query.edit_message_caption("Submission not found.")
-        except Exception:
-            pass
+        await query.answer("Submission not found.", show_alert=True)
         return
 
     if not is_manager(reviewer_id, submission['location_id'], db):
@@ -181,6 +282,8 @@ async def handle_reject_callback(update: Update, context: ContextTypes.DEFAULT_T
         await query.answer("You cannot reject your own submission.", show_alert=True)
         return
 
+    await query.answer()
+
     cursor = db.execute(
         "UPDATE task_submissions SET status = 'rejected', reviewed_at = ?, reviewed_by = ? "
         "WHERE id = ? AND status = 'pending'",
@@ -188,18 +291,23 @@ async def handle_reject_callback(update: Update, context: ContextTypes.DEFAULT_T
     )
     if cursor.rowcount == 0:
         try:
-            await query.edit_message_caption("Already processed.")
+            await query.edit_message_text("Already processed.")
         except Exception:
             pass
         return
 
     db.commit()
 
+    reviewer = _reviewer_label(query.from_user)
+    task_key = submission['task_key']
+    task_name = submission['custom_description'] or submission['task_name']
+
     try:
-        await query.edit_message_caption(
-            f"Rejected\n\n"
+        await query.edit_message_text(
+            f"❌ Rejected\n\n"
             f"{barista['full_name']}\n"
-            f"{submission['task_key']} — {submission['task_name']}"
+            f"{task_key} — {task_name}\n"
+            f"By: {reviewer}"
         )
     except Exception:
         pass
@@ -209,7 +317,7 @@ async def handle_reject_callback(update: Update, context: ContextTypes.DEFAULT_T
             chat_id=barista['telegram_id'],
             text=(
                 f"Task rejected\n\n"
-                f"{submission['task_key']} — {submission['task_name']}\n\n"
+                f"{task_key} — {task_name}\n\n"
                 f"Please redo the task and resubmit."
             )
         )
@@ -223,7 +331,7 @@ async def handle_reject_callback(update: Update, context: ContextTypes.DEFAULT_T
                 message_id=submission['group_message_id'],
                 text=(
                     f"❌ Rejected\n\n"
-                    f"{submission['task_key']} — {submission['task_name']}\n\n"
+                    f"{task_key} — {task_name}\n\n"
                     f"Please redo and resubmit."
                 )
             )
@@ -261,7 +369,7 @@ async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ).fetchone()['cnt']
 
     top = db.execute("""
-        SELECT u.full_name, u.tokens, COUNT(s.id) as tasks_done
+        SELECT u.full_name, u.username, u.tokens, COUNT(s.id) as tasks_done
         FROM users u
         LEFT JOIN task_submissions s ON s.user_id = u.id AND s.status = 'approved'
             AND date(s.submitted_at) >= date('now', '-7 days')
@@ -285,7 +393,14 @@ async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     medals = ['🥇', '🥈', '🥉']
     for i, b in enumerate(top):
         medal = medals[i] if i < 3 else f"{i+1}."
-        name = b['full_name'].split()[0]
+        name = _first_name(b['full_name'], b['username'])
         lines.append(f"{medal} {name} — {b['tasks_done']} tasks · {b['tokens']} pts")
 
     await update.message.reply_text('\n'.join(lines))
+
+
+def _first_name(full_name, username=''):
+    s = (full_name or '').strip()
+    if s:
+        return s.split()[0]
+    return username or 'Unknown'
