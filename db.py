@@ -34,6 +34,8 @@ CREATE TABLE IF NOT EXISTS task_submissions (
     photo_file_id TEXT NOT NULL,
     tokens_awarded INTEGER DEFAULT 0,
     status TEXT DEFAULT 'pending',
+    group_message_id INTEGER,
+    group_chat_id INTEGER,
     submitted_at TEXT DEFAULT (datetime('now')),
     reviewed_at TEXT,
     reviewed_by INTEGER,
