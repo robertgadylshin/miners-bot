@@ -55,18 +55,16 @@ async def cmd_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """, (user.id, location['id'])).fetchall()
     submitted_keys = {row['task_key']: row['status'] for row in submitted}
 
-    # Today's points earned
     earned_today = db.execute("""
         SELECT COALESCE(SUM(tokens_awarded), 0) as total FROM task_submissions
         WHERE user_id = (SELECT id FROM users WHERE telegram_id = ? AND location_id = ?)
-        AND status = 'approved'
-        AND date(submitted_at) = date('now')
+        AND status = 'approved' AND date(submitted_at) = date('now')
     """, (user.id, location['id'])).fetchone()['total']
 
     lines = [
         f"Tasks for {today_str}",
         f"📍 {location['name']}",
-        f"Today: {earned_today}/{DAILY_LIMIT} points earned",
+        f"Today: {earned_today}/{DAILY_LIMIT} points",
         "",
     ]
 
@@ -90,7 +88,7 @@ async def cmd_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lines.append(
         "📸 How to submit:\n"
         "Take a photo → send it here → task key as caption\n"
-        "FRIDGES or fridges or Fridges — any case works"
+        "FRIDGES or fridges — any case works"
     )
 
     await update.message.reply_text('\n'.join(lines))
@@ -121,6 +119,10 @@ async def handle_task_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         (user.id, location['id'])
     ).fetchone()
 
+    if db_user and db_user['role'] == 'manager':
+        await update.message.reply_text("Managers cannot submit tasks.")
+        return
+
     task = find_task_by_key(caption)
     if not task:
         await update.message.reply_text(
@@ -142,7 +144,6 @@ async def handle_task_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(msg)
         return
 
-    # Check daily limit
     earned_today = db.execute("""
         SELECT COALESCE(SUM(tokens_awarded), 0) as total FROM task_submissions
         WHERE user_id = ? AND status = 'approved' AND date(submitted_at) = date('now')
@@ -175,19 +176,12 @@ async def handle_task_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     submission_id = db.execute("SELECT last_insert_rowid()").fetchone()[0]
     db.commit()
 
-    sent = await update.message.reply_text(
+    await update.message.reply_text(
         f"📸 Submitted!\n\n"
         f"{task['key']} — {task['name']}\n"
         f"+{points} points\n\n"
         f"⏳ Waiting for manager approval..."
     )
-
-    # Save message info so we can edit it after approval
-    db.execute(
-        "UPDATE task_submissions SET group_message_id = ?, group_chat_id = ? WHERE id = ?",
-        (sent.message_id, chat.id, submission_id)
-    )
-    db.commit()
 
     managers = db.execute("""
         SELECT telegram_id FROM users
@@ -215,7 +209,7 @@ async def handle_task_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     for manager in managers:
         mgr_id = manager['telegram_id']
-        if mgr_id == 0:
+        if not mgr_id or mgr_id == 0:
             logger.warning("Manager has telegram_id=0, skipping")
             continue
         try:
@@ -246,7 +240,7 @@ async def cmd_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
         (user.id, location['id'])
     ).fetchone()
     if not db_user:
-        await update.message.reply_text("Send /start first to register.")
+        await update.message.reply_text("Use /tasks to get started.")
         return
 
     rank = db.execute("""
@@ -259,15 +253,15 @@ async def cmd_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
         (location['id'],)
     ).fetchone()['c']
 
-    today_done = db.execute("""
-        SELECT COUNT(*) as c FROM task_submissions
-        WHERE user_id = ? AND status = 'approved' AND date(submitted_at) = date('now')
-    """, (db_user['id'],)).fetchone()['c']
-
     earned_today = db.execute("""
         SELECT COALESCE(SUM(tokens_awarded), 0) as total FROM task_submissions
         WHERE user_id = ? AND status = 'approved' AND date(submitted_at) = date('now')
     """, (db_user['id'],)).fetchone()['total']
+
+    today_done = db.execute("""
+        SELECT COUNT(*) as c FROM task_submissions
+        WHERE user_id = ? AND status = 'approved' AND date(submitted_at) = date('now')
+    """, (db_user['id'],)).fetchone()['c']
 
     week_done = db.execute("""
         SELECT COUNT(*) as c FROM task_submissions
@@ -282,11 +276,10 @@ async def cmd_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """, (db_user['id'],)).fetchall()
 
     first_name = user.first_name or user.username or 'Barista'
-    loc_name = location['name']
 
     lines = [
         f"{first_name}'s balance",
-        f"{loc_name}",
+        f"{location['name']}",
         "",
         f"⭐ {db_user['tokens']} points",
         f"Total ever earned: {db_user['total_earned']}",
