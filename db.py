@@ -1,5 +1,6 @@
 import sqlite3
 import os
+import threading
 
 DB_PATH = os.environ.get("DB_PATH", "miners.db")
 
@@ -34,8 +35,6 @@ CREATE TABLE IF NOT EXISTS task_submissions (
     photo_file_id TEXT NOT NULL,
     tokens_awarded INTEGER DEFAULT 0,
     status TEXT DEFAULT 'pending',
-    group_message_id INTEGER,
-    group_chat_id INTEGER,
     submitted_at TEXT DEFAULT (datetime('now')),
     reviewed_at TEXT,
     reviewed_by INTEGER,
@@ -48,13 +47,18 @@ CREATE TABLE IF NOT EXISTS admins (
 );
 """
 
+_local = threading.local()
+
 
 def get_db():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA foreign_keys=ON")
-    return conn
+    if not hasattr(_local, 'conn') or _local.conn is None:
+        conn = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=30)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA foreign_keys=ON")
+        conn.execute("PRAGMA busy_timeout=10000")
+        _local.conn = conn
+    return _local.conn
 
 
 def init_db():
@@ -68,5 +72,4 @@ def init_db():
         )
 
     db.commit()
-    db.close()
     print("✅ Database initialized")
