@@ -10,17 +10,16 @@ from db import init_db, get_db
 from handlers.barista import (
     cmd_tasks, cmd_balance, cmd_leaderboard,
     handle_task_photo, handle_new_member,
-    handle_leaderboard_callback
+    handle_leaderboard_callback,
 )
 from handlers.manager import (
     cmd_stats, cmd_addmanager,
-    handle_approve_callback, handle_reject_callback
+    handle_approve_callback, handle_reject_callback,
+    handle_custom_approve_callback,
 )
 from handlers.admin import (
-    cmd_setup, cmd_locations, cmd_addlocation, cmd_mystats,
-    cmd_renamelocation, cmd_deletelocation, cmd_changemanager, cmd_resetlocation,
+    cmd_setup, cmd_settimezone, cmd_locations, cmd_addlocation, cmd_mystats,
     handle_adminstats_callback, handle_adminstats_back_callback,
-    handle_deletelocation_callback, handle_resetlocation_callback
 )
 
 logging.basicConfig(
@@ -50,7 +49,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         db.execute("""
             INSERT OR IGNORE INTO users (telegram_id, username, full_name, location_id, role)
             VALUES (?, ?, ?, ?, 'barista')
-        """, (user.id, user.username or '', user.full_name, location['id']))
+        """, (user.id, user.username or '', user.full_name or '', location['id']))
         db.commit()
 
         await update.message.reply_text(
@@ -59,7 +58,8 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "• /tasks — today's task list\n"
             "• /balance — your points & stats\n"
             "• /leaderboard — team ranking\n\n"
-            "Complete a task → take a photo → send it here with the task key as caption."
+            "Complete a task → take a photo → send it here with the task key as caption.\n"
+            "For a custom task: CUSTOM I cleaned the storage room"
         )
 
     else:
@@ -69,8 +69,8 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             try:
                 db.execute(
                     "UPDATE users SET telegram_id = ?, full_name = ? "
-                    "WHERE username = ? AND (telegram_id = 0 OR telegram_id IS NULL)",
-                    (user.id, user.full_name, user.username)
+                    "WHERE LOWER(username) = ? AND (telegram_id = 0 OR telegram_id IS NULL)",
+                    (user.id, user.full_name or '', user.username.lower())
                 )
                 db.commit()
                 logger.info(f"Updated telegram_id for username={user.username} to {user.id}")
@@ -95,12 +95,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text(
                     f"Hi {user.first_name}!\n\n"
                     "• /mystats — stats for all locations\n"
-                    "• /locations — list all locations\n\n"
-                    "Location management (use in group chat):\n"
-                    "• /renamelocation <new name>\n"
-                    "• /deletelocation\n"
-                    "• /resetlocation\n"
-                    "• /changemanager @username\n"
+                    "• /locations — list all locations\n"
                 )
             elif is_mgr:
                 loc_lines = "\n".join(f"- {m['loc_name']}" for m in is_mgr)
@@ -128,16 +123,15 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/leaderboard — team ranking\n\n"
         "How to submit:\n"
         "Photo + task key as caption\n"
-        "FRIDGES or fridges — any case works\n\n"
+        "FRIDGES or fridges — any case works\n"
+        "Multiple photos — send as album with caption on first photo\n"
+        "Custom task: CUSTOM I cleaned the storage room\n\n"
         "Manager commands:\n"
         "/stats — location stats\n"
-        "/addmanager @username — add manager\n\n"
-        "Admin commands (use in group):\n"
+        "/addmanager @username — promote to manager\n\n"
+        "Admin commands:\n"
         "/mystats — stats for all locations\n"
-        "/renamelocation <name> — rename this location\n"
-        "/deletelocation — delete this location\n"
-        "/resetlocation — clear all submissions & points\n"
-        "/changemanager @username — replace manager\n"
+        "/settimezone Europe/Kiev — set local time for this group\n"
     )
 
 
@@ -146,14 +140,12 @@ async def error_handler(update, context):
 
 
 async def post_init(application):
-    import os
     from telegram import (
         BotCommandScopeAllGroupChats,
         BotCommandScopeAllPrivateChats,
         BotCommandScopeChat,
     )
 
-    # Group chats — barista commands only
     await application.bot.set_my_commands(
         [
             ("tasks",       "Today's task checklist"),
@@ -163,20 +155,18 @@ async def post_init(application):
         scope=BotCommandScopeAllGroupChats()
     )
 
-    # Private chats default — just /start for managers
     await application.bot.set_my_commands(
         [("start", "Activate notifications")],
         scope=BotCommandScopeAllPrivateChats()
     )
 
-    # Super-admin gets /mystats and /help in DM
     admin_id = os.environ.get("SUPER_ADMIN_ID")
     if admin_id:
         try:
             await application.bot.set_my_commands(
                 [
-                    ("mystats", "Stats for all locations"),
-                    ("help",    "All commands"),
+                    ("mystats",  "Stats for all locations"),
+                    ("help",     "All commands"),
                 ],
                 scope=BotCommandScopeChat(chat_id=int(admin_id))
             )
@@ -193,31 +183,30 @@ def main():
 
     app = Application.builder().token(token).post_init(post_init).build()
 
-    app.add_handler(CommandHandler("start",          cmd_start))
-    app.add_handler(CommandHandler("help",           cmd_help))
-    app.add_handler(CommandHandler("tasks",          cmd_tasks))
-    app.add_handler(CommandHandler("balance",        cmd_balance))
-    app.add_handler(CommandHandler("leaderboard",    cmd_leaderboard))
-    app.add_handler(CommandHandler("stats",          cmd_stats))
-    app.add_handler(CommandHandler("addmanager",     cmd_addmanager))
-    app.add_handler(CommandHandler("setup",          cmd_setup))
-    app.add_handler(CommandHandler("locations",      cmd_locations))
-    app.add_handler(CommandHandler("addlocation",    cmd_addlocation))
-    app.add_handler(CommandHandler("mystats",        cmd_mystats))
-    app.add_handler(CommandHandler("renamelocation", cmd_renamelocation))
-    app.add_handler(CommandHandler("deletelocation", cmd_deletelocation))
-    app.add_handler(CommandHandler("changemanager",  cmd_changemanager))
-    app.add_handler(CommandHandler("resetlocation",  cmd_resetlocation))
+    app.add_handler(CommandHandler("start",       cmd_start))
+    app.add_handler(CommandHandler("help",        cmd_help))
+    app.add_handler(CommandHandler("tasks",       cmd_tasks))
+    app.add_handler(CommandHandler("balance",     cmd_balance))
+    app.add_handler(CommandHandler("leaderboard", cmd_leaderboard))
+    app.add_handler(CommandHandler("stats",       cmd_stats))
+    app.add_handler(CommandHandler("addmanager",  cmd_addmanager))
+    app.add_handler(CommandHandler("setup",       cmd_setup))
+    app.add_handler(CommandHandler("settimezone", cmd_settimezone))
+    app.add_handler(CommandHandler("locations",   cmd_locations))
+    app.add_handler(CommandHandler("addlocation", cmd_addlocation))
+    app.add_handler(CommandHandler("mystats",     cmd_mystats))
 
-    app.add_handler(CallbackQueryHandler(handle_approve_callback,          pattern=r'^approve_'))
-    app.add_handler(CallbackQueryHandler(handle_reject_callback,           pattern=r'^reject_'))
-    app.add_handler(CallbackQueryHandler(handle_leaderboard_callback,      pattern=r'^lb_'))
-    app.add_handler(CallbackQueryHandler(handle_adminstats_back_callback,  pattern=r'^adminstats_back$'))
-    app.add_handler(CallbackQueryHandler(handle_adminstats_callback,       pattern=r'^adminstats_\d+$'))
-    app.add_handler(CallbackQueryHandler(handle_deletelocation_callback,   pattern=r'^deleteloc_'))
-    app.add_handler(CallbackQueryHandler(handle_resetlocation_callback,    pattern=r'^resetloc_'))
+    app.add_handler(CallbackQueryHandler(handle_approve_callback,         pattern=r'^approve_\d+$'))
+    app.add_handler(CallbackQueryHandler(handle_custom_approve_callback,  pattern=r'^custom_\d+_\d+$'))
+    app.add_handler(CallbackQueryHandler(handle_reject_callback,          pattern=r'^reject_\d+$'))
+    app.add_handler(CallbackQueryHandler(handle_leaderboard_callback,     pattern=r'^lb_'))
+    app.add_handler(CallbackQueryHandler(handle_adminstats_back_callback, pattern=r'^adminstats_back$'))
+    app.add_handler(CallbackQueryHandler(handle_adminstats_callback,      pattern=r'^adminstats_\d+$'))
 
-    app.add_handler(MessageHandler(filters.PHOTO & filters.CaptionRegex(r'.+'), handle_task_photo))
+    app.add_handler(MessageHandler(
+        filters.PHOTO & filters.ChatType.GROUPS,
+        handle_task_photo,
+    ))
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, handle_new_member))
 
     app.add_error_handler(error_handler)
