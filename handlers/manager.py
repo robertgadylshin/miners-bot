@@ -1,4 +1,3 @@
-import json
 import logging
 from datetime import datetime, date
 
@@ -56,15 +55,26 @@ async def cmd_addmanager(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Location not set up.")
         return
 
-    db.execute(
-        "INSERT OR IGNORE INTO users (telegram_id, username, full_name, location_id, role) "
-        "VALUES (0, ?, ?, ?, 'barista')",
-        (username, username, location['id'])
-    )
-    db.execute(
-        "UPDATE users SET role = 'manager' WHERE LOWER(username) = ? AND location_id = ?",
+    existing = db.execute(
+        "SELECT * FROM users WHERE LOWER(username) = ? AND location_id = ?",
         (username, location['id'])
-    )
+    ).fetchone()
+
+    if existing:
+        db.execute(
+            "UPDATE users SET role = 'manager' WHERE LOWER(username) = ? AND location_id = ?",
+            (username, location['id'])
+        )
+    else:
+        import hashlib
+        placeholder_id = -(int(hashlib.sha256(
+            f"{username}_{location['id']}".encode()
+        ).hexdigest()[:14], 16) % (2 ** 31))
+        db.execute(
+            "INSERT INTO users (telegram_id, username, full_name, location_id, role) "
+            "VALUES (?, ?, ?, ?, 'manager')",
+            (placeholder_id, username, username, location['id'])
+        )
     db.commit()
 
     await update.message.reply_text(
