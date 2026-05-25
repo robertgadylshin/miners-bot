@@ -1,103 +1,90 @@
-# The Miners — Task Reward Bot
+# The Miners — Task Bot
 
-Telegram bot for The Miners coffee shops. Baristas earn tokens by completing cleaning tasks from the daily checklist. Managers approve submissions via photo. Tokens are redeemed for rewards.
-
----
-
-## Quick Setup (30 minutes total)
-
-### Step 1 — Create the bot (5 min)
-1. Open Telegram → find **@BotFather**
-2. Send `/newbot`
-3. Name: `The Miners Tasks`
-4. Username: `theminers_tasks_bot` (or any available name)
-5. Copy the token — looks like `7123456789:AAF...`
-
-### Step 2 — GitHub (5 min)
-1. Go to [github.com](https://github.com) → Sign up (free)
-2. Click **New repository**
-3. Name: `miners-bot`, set to **Public**
-4. Upload all files from this folder
-
-### Step 3 — Railway (10 min)
-1. Go to [railway.app](https://railway.app) → **Sign in with GitHub**
-2. Click **New Project** → **Deploy from GitHub repo** → select `miners-bot`
-3. Click **+ New** → **Database** → **Add PostgreSQL** (Railway handles the rest)
-4. Go to your service → **Variables** tab → add:
-   - `BOT_TOKEN` = your token from BotFather
-   - `SUPER_ADMIN_ID` = your personal Telegram user ID (get it from [@userinfobot](https://t.me/userinfobot))
-5. Click **Deploy**
-
-### Step 4 — Set up your first location (5 min)
-1. Create a new Telegram group for the coffee shop
-2. Add your bot to the group (search by username)
-3. Send `/setup The Miners — Letna` in the group
-4. Add a manager: `/addmanager @their_username`
-
-That's it — the bot is live!
+Telegram bot for The Miners coffee shops. Baristas earn points by completing tasks from the daily checklist. Points go directly to The Miners loyalty card.
 
 ---
 
-## How It Works
+## How It Works for Baristas
 
-### For baristas
+Each shift has a task checklist. Complete a task, take a photo, send it in the group chat with the task key as caption. Your manager reviews the photo and approves it — points land on your loyalty card.
+
+**Why 300 points per shift maximum?**
+The cap keeps it fair across the whole team. One person can't stack every task in one shift while others get nothing. 300 points is designed to reward a full, active shift — not a speed run.
+
+### Points per task
+
+| Difficulty | Points | Examples |
+|------------|--------|---------|
+| 🟢 Quick | 100 | Check toilets, wash thermoses, clean spoons |
+| 🟡 Standard | 200 | Wipe fridges, clean glasses, clean sinks |
+| 🔴 Heavy | 300 | Ice Maker, EK Grinder, clean BUNN |
+
+One heavy task already fills your shift cap — so pick based on what actually needs doing, not just the points.
+
+---
+
+## Submitting a Task
+
+1. Complete the task
+2. Take a photo (or multiple — send as an album)
+3. Send in the group chat with the task key as caption
+4. Example: `FRIDGES` or `fridges` — any case works
+
+**Custom task:** if you did something not on today's list, send:
+`CUSTOM I deep-cleaned the storage shelf`
+Your manager will decide the points.
+
+---
+
+## Commands
+
+### Barista
 | Command | What it does |
 |---------|-------------|
-| `/tasks` | See today's task list with token values |
-| `/balance` | Check token balance + recent earnings |
-| `/rewards` | Browse all available rewards |
-| `/redeem <name>` | Redeem a reward |
+| `/tasks` | Today's checklist with point values |
+| `/balance` | Your points, rank, and recent history |
+| `/leaderboard` | Team ranking for the week or month |
 
-**To submit a task:**
-1. Complete the task
-2. Take a photo
-3. Send the photo in the group chat
-4. Write the task key as caption (e.g. `mon_fridges`)
-5. Wait for manager approval — tokens arrive automatically
+### Manager
+| Command | What it does |
+|---------|-------------|
+| `/stats` | Today's submissions and weekly top 5 |
+| `/addmanager @username` | Promote a barista to manager |
 
-### For managers
-Managers receive a private message with the photo + Approve/Reject buttons.
-They also have:
-- `/stats` — today's submissions, pending approvals, weekly leaderboard
+Managers receive every submission as a private message with photo and Approve / Reject buttons. For custom tasks, managers choose the points: 100, 200, or 300.
 
-### For super-admin
-- `/setup <name>` — register a group as a location
-- `/locations` — list all locations
-- `/addlocation <chat_id> <name>` — add location by chat ID
-- `/addmanager @username` — promote a barista to manager
+### Admin
+| Command | What it does |
+|---------|-------------|
+| `/setup <name>` | Register this group as a location |
+| `/settimezone Europe/Prague` | Set local timezone for the group |
+| `/locations` | List all locations |
+| `/addlocation <chat_id> <name>` | Add location by chat ID |
+| `/mystats` | Stats overview for all locations |
 
 ---
 
-## Token System
+## Loyalty Card Points
 
-| Difficulty | Examples | Tokens |
-|------------|----------|--------|
-| 🟢 Easy | Check toilets, wash thermoses | 1 |
-| 🟡 Standard | Wipe fridges, clean glasses | 2 |
-| 🔴 Heavy | Deep Clean machine, Ice Maker | 3 |
-
-Each task can only be submitted **once per day per person**.
+Points earned in the bot are The Miners loyalty card points. To have points added to your card, ask your manager — they confirm the transfer manually. The bot tracks the balance; the card reflects it after the manager processes it.
 
 ---
 
-## Rewards
+## Anti-Fraud
 
-TBA
-
----
-
-## Anti-Fraud Measures
-- Each task key can only be submitted **once per person per day**
-- Manager must **manually approve** every photo
-- The bot sends the photo directly to the manager for review
-- Submission timestamps are recorded and stored
-- All history is permanent and auditable
+- Each task can only be submitted **once per person per day**
+- Every submission requires a **photo**
+- Manager **manually approves** every photo before points are awarded
+- Managers **cannot approve their own submissions**
+- Daily limit of **300 points per person** is enforced at submission time
 
 ---
 
-## Adding More Locations
-For each new coffee shop:
+## Adding a New Location
+
 1. Create a new Telegram group
-2. Add the bot
-3. Send `/setup Location Name` in that group
-4. The bot isolates data per location automatically
+2. Add the bot to the group
+3. Send `/setup Location Name` in the group
+4. Set timezone: `/settimezone Europe/Prague`
+5. Add a manager: `/addmanager @username`
+6. Done — data is fully isolated per location
