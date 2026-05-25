@@ -1,4 +1,5 @@
-from datetime import date
+from datetime import date, datetime
+from zoneinfo import ZoneInfo
 
 POINTS = {
     'easy': 100,
@@ -58,7 +59,6 @@ WEEKLY_TASKS = {
         {'key': 'SHOWCASE',   'name': 'Check & refill showcase (check coffee beans date)', 'difficulty': 'easy'},
         {'key': 'BUNN',       'name': 'Clean BUNN + stand underneath + EK Grinder area', 'difficulty': 'medium'},
         {'key': 'SINKS',      'name': 'Clean ALL sinks with CIF cleaner', 'difficulty': 'medium'},
-        {'key': 'MIXER',      'name': 'Clean the mixer', 'difficulty': 'easy'},
         {'key': 'PLANTS',     'name': 'Dust off leaves of the plants', 'difficulty': 'easy'},
         {'key': 'SHELVES',    'name': 'Wipe dust off accessory shelves', 'difficulty': 'easy'},
         {'key': 'FOODTOP',    'name': 'Clean top of food showcase', 'difficulty': 'easy'},
@@ -74,15 +74,31 @@ WEEKLY_TASKS = {
 }
 
 
-def get_today_tasks():
-    weekday = date.today().strftime('%A').lower()
+def _local_weekday(timezone: str = 'UTC') -> str:
+    try:
+        tz = ZoneInfo(timezone)
+    except Exception:
+        tz = ZoneInfo('UTC')
+    return datetime.now(tz).strftime('%A').lower()
+
+
+def _local_date_str(timezone: str = 'UTC') -> str:
+    try:
+        tz = ZoneInfo(timezone)
+    except Exception:
+        tz = ZoneInfo('UTC')
+    return datetime.now(tz).strftime('%A, %d %B %Y')
+
+
+def get_today_tasks(timezone: str = 'UTC'):
+    weekday = _local_weekday(timezone)
     tasks = list(WEEKLY_TASKS.get('daily', []))
     tasks += WEEKLY_TASKS.get(weekday, [])
     return tasks
 
 
-def get_today_task_keys() -> set:
-    return {t['key'] for t in get_today_tasks()}
+def get_today_task_keys(timezone: str = 'UTC') -> set:
+    return {t['key'] for t in get_today_tasks(timezone)}
 
 
 def get_points_for_task(task_key: str) -> int:
