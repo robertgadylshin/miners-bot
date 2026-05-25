@@ -10,6 +10,7 @@ from db import get_db
 from tasks import (
     get_today_tasks, get_today_task_keys, get_points_for_task,
     find_task_by_key, DAILY_LIMIT, CUSTOM_TASK_KEY, CUSTOM_TASK,
+    _local_date_str,
 )
 
 logger = logging.getLogger(__name__)
@@ -60,8 +61,9 @@ async def cmd_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """, (user.id, user.username or '', user.full_name or '', location['id']))
     db.commit()
 
-    tasks = get_today_tasks()
-    today_str = date.today().strftime('%A, %d %B %Y')
+    tz = location['timezone'] or 'UTC'
+    tasks = get_today_tasks(tz)
+    today_str = _local_date_str(tz)
 
     submitted = db.execute("""
         SELECT task_key, status FROM task_submissions
@@ -222,7 +224,7 @@ async def _do_submission(
                 reply_to_message_id=reply_to_message_id,
             )
             return
-        if task['key'] not in get_today_task_keys():
+        if task['key'] not in get_today_task_keys(location['timezone'] or 'UTC'):
             await context.bot.send_message(
                 chat_id=chat_id,
                 text=(
